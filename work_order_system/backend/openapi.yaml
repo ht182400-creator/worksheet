@@ -1,0 +1,475 @@
+openapi: 3.0.3
+info:
+  title: 工单智能识别与扫码分发系统 API
+  description: |
+    基于《需求与架构文档 V5.0》§25 接口契约导出的 OpenAPI 规范。
+    约束：API 版本化前缀 /api/v1、多租户 X-Tenant-Id、幂等键 Idempotency-Key、
+    乐观锁 version、状态机 allowedTransitions 校验（BR-18）、统一 BIZ_* 错误码。
+  version: 1.0.0
+servers:
+  - url: http://localhost:8000/api/v1
+    description: 本地开发
+security:
+  - bearerAuth: []
+  - tenantHeader: []
+paths:
+  /files/upload:
+    post:
+      summary: OCR 文件上传（异步，幂等）
+      operationId: uploadFile
+      tags: [OCR]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                templateId:
+                  type: string
+      responses:
+        '202':
+          description: 已入队
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string, example: "0" }
+                  data:
+                    type: object
+                    properties:
+                      taskId: { type: string, example: "tk_xxxx" }
+                      status: { type: string, example: "QUEUED" }
+                      pollUrl: { type: string, example: "/api/v1/ocr/tasks/tk_xxxx" }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/OcrFailed' }
+  /ocr/tasks/{taskId}:
+    get:
+      summary: 轮询 OCR 任务终态
+      operationId: getOcrTask
+      tags: [OCR]
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        '200':
+          description: 任务状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  taskId: { type: string }
+                  status: { type: string, enum: [QUEUED, PROCESSING, DONE, FAILED, DEAD_LETTER] }
+                  result:
+                    type: object
+                    properties:
+                      fields:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            key: { type: string }
+                            value: { type: string }
+                            confidence: { type: number, example: 0.98 }
+                      docConfidence: { type: number, example: 0.95 }
+                      needReview: { type: boolean, example: false }
+  /work-orders:
+    post:
+      summary: 创建工单（UUID v7 + tenant_id）
+      operationId: createWorkOrder
+      tags: [WorkOrder]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkOrderCreate' }
+      responses:
+        '200':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string }
+                  data: { $ref: '#/components/schemas/WorkOrder' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /work-orders/{id}:
+    get:
+      summary: 获取工单
+      operationId: getWorkOrder
+      tags: [WorkOrder]
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string }
+                  data: { $ref: '#/components/schemas/WorkOrder' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /work-orders/{id}/reports:
+    post:
+      summary: 报工提交（超报拦截 + 自动合并 + 撤回窗口，幂等）
+      operationId: submitReport
+      tags: [Report]
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReportRequest' }
+      responses:
+        '200':
+          description: 报工成功（含合并结果）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string }
+                  data:
+                    type: object
+                    properties:
+                      report_id: { type: string }
+                      order_id: { type: string }
+                      merged_completed: { type: integer, example: 100 }
+                      need_review: { type: boolean }
+                      withdrawable_until: { type: string, format: date-time }
+        '422': { $ref: '#/components/responses/ReportOverflow' }
+        '409': { $ref: '#/components/responses/VersionConflict' }
+  /reports/{id}:
+    delete:
+      summary: 报工撤回（M5-12）
+      operationId: withdrawReport
+      tags: [Report]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                operator_id: { type: string }
+      responses:
+        '200':
+          description: 已撤回
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string }
+                  data: { type: object, properties: { status: { type: string, example: WITHDRAWN } } }
+        '409': { $ref: '#/components/responses/WithdrawExpired' }
+  /work-orders/{id}/status:
+    patch:
+      summary: 状态变更（校验 allowedTransitions + 乐观锁）
+      operationId: patchStatus
+      tags: [WorkOrder]
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_state, version]
+              properties:
+                target_state: { type: integer, minimum: 0, maximum: 6 }
+                version: { type: integer }
+                reason: { type: string }
+      responses:
+        '200':
+          description: 变更成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string }
+                  data:
+                    type: object
+                    properties:
+                      current_state: { type: integer }
+                      version: { type: integer }
+        '409':
+          description: 非法跳转或乐观锁失败
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /work-orders/{id}/state-machine:
+    get:
+      summary: 状态机端点（前端按钮唯一数据源）
+      operationId: getStateMachine
+      tags: [WorkOrder]
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: 当前态 + 合法跳转 + 可见按钮
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string }
+                  data: { $ref: '#/components/schemas/StateMachine' }
+  /qrcode/generate:
+    post:
+      summary: 单张二维码生成（幂等，状态 3a）
+      operationId: generateQrcode
+      tags: [Qrcode]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QrcodeGenerateRequest' }
+      responses:
+        '200':
+          description: 已生成
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: string }
+                  data:
+                    type: object
+                    properties:
+                      print_task_id: { type: string }
+                      state: { type: string, example: "3a_已生成" }
+  /qrcode/batch:
+    post:
+      summary: 批量二维码生成（≤100，202+Location）
+      operationId: batchQrcode
+      tags: [Qrcode]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QrcodeBatchRequest' }
+      responses:
+        '202':
+          description: 已受理
+          headers:
+            Location:
+              description: 批量任务查询地址
+              schema: { type: string }
+  /qrcode/print/confirm:
+    post:
+      summary: 打印确认（3a → 3b）
+      operationId: confirmPrint
+      tags: [Qrcode]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                print_task_id: { type: string }
+      responses:
+        '200': { description: 已确认打印 }
+  /conflicts/{conflictId}/resolve:
+    post:
+      summary: 冲突裁决（限主管角色，幂等）
+      operationId: resolveConflict
+      tags: [Conflict]
+      parameters:
+        - name: conflictId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConflictResolveRequest' }
+      responses:
+        '200': { description: 已裁决 }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /bigscreen/metrics:
+    get:
+      summary: 大屏指标流（SSE + 新鲜度）
+      operationId: bigscreenMetrics
+      tags: [BigScreen]
+      parameters:
+        - name: lineId
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: text/event-stream
+  /pending-tasks:
+    get:
+      summary: 工人待办任务（过滤参数）
+      operationId: pendingTasks
+      tags: [Worker]
+      parameters:
+        - name: operatorId
+          in: query
+          schema: { type: string }
+        - name: state
+          in: query
+          schema: { type: integer }
+      responses:
+        '200': { description: 任务列表 }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    tenantHeader:
+      type: apiKey
+      in: header
+      name: X-Tenant-Id
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, format: uuid }
+    OrderId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      schema: { type: string }
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        code: { type: string, example: BIZ_STATE_ILLEGAL }
+        message: { type: string, example: "非法状态跳转" }
+        traceId: { type: string }
+    WorkOrderCreate:
+      type: object
+      required: [display_no, tenant_id]
+      properties:
+        display_no: { type: string, example: "WO-2026-001" }
+        tenant_id: { type: string }
+        doc_confidence: { type: number }
+        need_review: { type: boolean }
+    WorkOrder:
+      type: object
+      properties:
+        order_uuid: { type: string, format: uuid }
+        display_no: { type: string }
+        tenant_id: { type: string }
+        state: { type: integer, minimum: 0, maximum: 6 }
+        version: { type: integer }
+        doc_confidence: { type: number }
+        need_review: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    StateMachine:
+      type: object
+      properties:
+        current_state: { type: integer }
+        allowedTransitions:
+          type: array
+          items: { type: integer }
+        visibleButtons:
+          type: array
+          items: { type: string }
+        version: { type: integer }
+    ReportRequest:
+      type: object
+      required: [process_id, completed_qty, operator_id, version]
+      properties:
+        process_id: { type: string }
+        completed_qty: { type: integer }
+        operator_id: { type: string }
+        client_created_at: { type: string, format: date-time }
+        version: { type: integer }
+    QrcodeGenerateRequest:
+      type: object
+      required: [order_id, dpi, size_mm]
+      properties:
+        order_id: { type: string }
+        process_id: { type: string }
+        dpi: { type: integer, minimum: 300 }
+        size_mm: { type: integer, minimum: 30 }
+    QrcodeBatchRequest:
+      type: object
+      required: [order_ids, dpi]
+      properties:
+        order_ids:
+          type: array
+          items: { type: string }
+          maxItems: 100
+        dpi: { type: integer, minimum: 300 }
+    ConflictResolveRequest:
+      type: object
+      required: [resolve_by, operator_role]
+      properties:
+        resolve_by: { type: string, enum: [keep_local, keep_server, merge] }
+        resolved_qty: { type: integer }
+        operator_role: { type: string, enum: [SUPERVISOR, CLERK] }
+  responses:
+    Unauthorized:
+      description: 未鉴权
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: 角色无权
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: 工单不存在
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    VersionConflict:
+      description: 乐观锁失败
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    ReportOverflow:
+      description: 超报拦截
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    WithdrawExpired:
+      description: 撤回窗口已过期
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    OcrFailed:
+      description: OCR 任务失败
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }

@@ -1,0 +1,33 @@
+# ===== 依赖 =====
+node_modules/
+
+# ===== 构建产物 =====
+dist/
+build/
+
+# ===== Python 缓存/打包 =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ===== 虚拟环境 =====
+.venv/
+venv/
+env/
+
+# ===== 运行时/测试数据库 =====
+*.db
+*.sqlite
+*.sqlite3
+
+# ===== 日志 =====
+*.log
+
+# ===== AI 工具内部数据（非项目代码） =====
+.codebuddy/
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db

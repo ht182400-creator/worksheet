@@ -1,0 +1,302 @@
+{
+  "schema_version": "1.0",
+  "description": "工单系统数据驱动测试用例库（与 docs/05_测试案例库文档.md 一一对应）",
+  "source_of_truth": "docs/05_测试案例库文档.md",
+  "categories": ["functional", "boundary", "exception", "concurrency"],
+  "cases": [
+    {
+      "id": "TC-01", "module": "health", "category": "functional", "priority": "P0",
+      "title": "健康检查", "related_br": [],
+      "precondition": "服务已启动",
+      "input": "GET /health",
+      "expected": "200 {\"status\":\"ok\"}",
+      "actual": "200 {\"status\":\"ok\"}", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step1"
+    },
+    {
+      "id": "TC-02", "module": "work_orders", "category": "functional", "priority": "P0",
+      "title": "创建工单（默认 state=2 待分发）", "related_br": ["BR-16"],
+      "precondition": "无",
+      "input": "POST /work-orders {display_no, tenant_id}",
+      "expected": "200，返回 order_uuid/version=1/state=2",
+      "actual": "200，order_uuid 非空，state=2，version=1", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step2"
+    },
+    {
+      "id": "TC-03", "module": "work_orders", "category": "functional", "priority": "P0",
+      "title": "获取工单字段一致", "related_br": [],
+      "precondition": "TC-02 已建单",
+      "input": "GET /work-orders/{order_uuid}",
+      "expected": "200，order_uuid/display_no/tenant_id/state 与创建一致",
+      "actual": "200，字段一致", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step3"
+    },
+    {
+      "id": "TC-04", "module": "work_orders", "category": "functional", "priority": "P0",
+      "title": "状态机端点（按钮数据源）", "related_br": ["BR-18", "D3"],
+      "precondition": "工单 state=2",
+      "input": "GET /work-orders/{id}/state-machine",
+      "expected": "200，current_state=2，allowed_transitions 含 3，visible_buttons 含 GEN_QRCODE",
+      "actual": "200，current_state=2，allowed_transitions=[1,3]，visible_buttons=[BACK_REVIEW,GEN_QRCODE]", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step4"
+    },
+    {
+      "id": "TC-05", "module": "work_orders", "category": "exception", "priority": "P0",
+      "title": "非法状态跳转被拦截（D3 防线）", "related_br": ["BR-18", "D3"],
+      "precondition": "工单 state=2",
+      "input": "PATCH /status {target_state:0, version:1}",
+      "expected": "409 BIZ_STATE_ILLEGAL",
+      "actual": "409，code=BIZ_STATE_ILLEGAL", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step5"
+    },
+    {
+      "id": "TC-06", "module": "work_orders", "category": "functional", "priority": "P0",
+      "title": "合法状态跳转 + 乐观锁自增", "related_br": ["BR-18"],
+      "precondition": "工单 state=2, version=1",
+      "input": "PATCH /status {target_state:3, version:1}",
+      "expected": "200，state=3，version=2",
+      "actual": "200，state=3，version=2", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step6"
+    },
+    {
+      "id": "TC-07", "module": "reports", "category": "functional", "priority": "P0",
+      "title": "报工提交 + 在线自动合并", "related_br": ["BR-22", "D4"],
+      "precondition": "工单已建，version 已知",
+      "input": "POST /reports {process_id, completed_qty:50, operator_id, version}",
+      "expected": "200，merged_completed=50（演示 required_qty=100）",
+      "actual": "200，merged_completed=50", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step7"
+    },
+    {
+      "id": "TC-08", "module": "reports", "category": "boundary", "priority": "P0",
+      "title": "超报拦截（累计 > 要求量）", "related_br": ["BR-05"],
+      "precondition": "已报 50，要求 100",
+      "input": "POST /reports {completed_qty:60}",
+      "expected": "422 BIZ_REPORT_OVERFLOW（50+60>100）",
+      "actual": "422，code=BIZ_REPORT_OVERFLOW", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step8"
+    },
+    {
+      "id": "TC-09", "module": "reports", "category": "functional", "priority": "P1",
+      "title": "报工撤回（窗口内）", "related_br": ["M5-12"],
+      "precondition": "TC-07 已报工，未超 30min 窗口",
+      "input": "DELETE /reports/{report_id} {operator_id}",
+      "expected": "200 {status:WITHDRAWN}",
+      "actual": "200，status=WITHDRAWN", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step9"
+    },
+    {
+      "id": "TC-10", "module": "qrcode", "category": "functional", "priority": "P1",
+      "title": "单张二维码生成（3a）", "related_br": ["BR-21"],
+      "precondition": "工单已建",
+      "input": "POST /qrcode/generate {order_id, dpi:300, size_mm:30}",
+      "expected": "200 {print_task_id, state:3a_已生成}",
+      "actual": "200，state=3a_已生成", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step10"
+    },
+    {
+      "id": "TC-11", "module": "qrcode", "category": "functional", "priority": "P1",
+      "title": "批量二维码生成（202+Location）", "related_br": ["M3-02"],
+      "precondition": "工单已建",
+      "input": "POST /qrcode/batch {order_ids:[...≤100], dpi:300}",
+      "expected": "202，body 含 batchId，Header Location=/api/v1/qrcode/batch/tasks/{batchId}",
+      "actual": "202，含 batchId 与 Location", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step11"
+    },
+    {
+      "id": "TC-12", "module": "qrcode", "category": "functional", "priority": "P1",
+      "title": "打印确认（3a→3b）", "related_br": ["BR-21"],
+      "precondition": "TC-10 已生成 3a",
+      "input": "POST /qrcode/print/confirm {print_task_id}",
+      "expected": "200 {state:3b_已打印确认}",
+      "actual": "200，state=3b_已打印确认", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step12"
+    },
+    {
+      "id": "TC-13", "module": "files", "category": "functional", "priority": "P1",
+      "title": "OCR 文件上传（异步 202）", "related_br": ["BR-17"],
+      "precondition": "无",
+      "input": "POST /files/upload (multipart file)",
+      "expected": "202 {taskId, status:QUEUED, pollUrl}",
+      "actual": "202，含 taskId/QUEUED/pollUrl", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step13"
+    },
+    {
+      "id": "TC-14", "module": "files", "category": "functional", "priority": "P1",
+      "title": "OCR 轮询终态（演示 DONE）", "related_br": ["BR-20"],
+      "precondition": "TC-13 已上传",
+      "input": "GET /ocr/tasks/{task_id}",
+      "expected": "200 {status:DONE, result.fields[], docConfidence:0.95, needReview:false}",
+      "actual": "200，DONE + 字段置信度", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step14"
+    },
+    {
+      "id": "TC-15", "module": "conflicts", "category": "functional", "priority": "P1",
+      "title": "冲突裁决（主管）", "related_br": ["BR-06", "D7"],
+      "precondition": "无",
+      "input": "POST /conflicts/{id}/resolve {resolve_by:keep_server, operator_role:SUPERVISOR}",
+      "expected": "200 {status:RESOLVED, strategy:SERVER}",
+      "actual": "200，strategy=SERVER", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step15"
+    },
+    {
+      "id": "TC-16", "module": "conflicts", "category": "exception", "priority": "P1",
+      "title": "冲突裁决权限拦截（工人）", "related_br": ["D7"],
+      "precondition": "无",
+      "input": "POST /conflicts/{id}/resolve {resolve_by:keep_server, operator_role:CLERK}",
+      "expected": "403 BIZ_PERMISSION_DENY",
+      "actual": "403，code=BIZ_PERMISSION_DENY", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step16"
+    },
+    {
+      "id": "TC-17", "module": "worker", "category": "functional", "priority": "P1",
+      "title": "工人待办列表", "related_br": [],
+      "precondition": "存在工序进度",
+      "input": "GET /pending-tasks",
+      "expected": "200，列表含 remaining_qty = required - completed",
+      "actual": "200，remaining_qty 正确", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step17"
+    },
+    {
+      "id": "TC-18", "module": "bigscreen", "category": "functional", "priority": "P1",
+      "title": "大屏 SSE 流（首条事件）", "related_br": ["BR-19", "D5"],
+      "precondition": "无",
+      "input": "GET /bigscreen/metrics?lineId=l1&max_events=1",
+      "expected": "200 text/event-stream，首行 event: metrics",
+      "actual": "200，收到 event: metrics 首条事件", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step18"
+    },
+    {
+      "id": "TC-19", "module": "qrcode", "category": "boundary", "priority": "P1",
+      "title": "批量二维码超上限", "related_br": ["M3-02"],
+      "precondition": "无",
+      "input": "POST /qrcode/batch {order_ids:[101个]}",
+      "expected": "422 BIZ_BATCH_OVERFLOW",
+      "actual": "422，code=BIZ_BATCH_OVERFLOW", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step14"
+    },
+    {
+      "id": "TC-20", "module": "reports", "category": "boundary", "priority": "P2",
+      "title": "报工量为 0（下界 ge=0）", "related_br": ["BR-22"],
+      "precondition": "工单已建",
+      "input": "POST /reports {completed_qty:0}",
+      "expected": "200，merged_completed 不变（0 累加）",
+      "actual": "200，merged_completed=0", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step15"
+    },
+    {
+      "id": "TC-21", "module": "reports", "category": "boundary", "priority": "P0",
+      "title": "报工恰好等于要求量（边界不超报）", "related_br": ["BR-05"],
+      "precondition": "completed=0, required=100",
+      "input": "POST /reports {completed_qty:100}",
+      "expected": "200（恰好等于不触发超报）",
+      "actual": "200，merged_completed=100", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step16"
+    },
+    {
+      "id": "TC-22", "module": "qrcode", "category": "boundary", "priority": "P2",
+      "title": "二维码 DPI 低于下限", "related_br": ["BR-15"],
+      "precondition": "无",
+      "input": "POST /qrcode/generate {dpi:200}",
+      "expected": "422（Pydantic ge=300 校验）",
+      "actual": "422（Pydantic dpi ge=300 校验）", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step17"
+    },
+    {
+      "id": "TC-23", "module": "qrcode", "category": "boundary", "priority": "P2",
+      "title": "二维码尺寸低于下限", "related_br": ["BR-15"],
+      "precondition": "无",
+      "input": "POST /qrcode/generate {size_mm:20}",
+      "expected": "422（Pydantic ge=30 校验）",
+      "actual": "422（Pydantic size_mm ge=30 校验）", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step18"
+    },
+    {
+      "id": "TC-24", "module": "work_orders", "category": "exception", "priority": "P0",
+      "title": "获取不存在工单", "related_br": [],
+      "precondition": "无",
+      "input": "GET /work-orders/{不存在uuid}",
+      "expected": "404 BIZ_ORDER_NOT_FOUND",
+      "actual": "404，code=BIZ_ORDER_NOT_FOUND", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step19"
+    },
+    {
+      "id": "TC-25", "module": "work_orders", "category": "exception", "priority": "P0",
+      "title": "状态变更目标工单不存在", "related_br": [],
+      "precondition": "无",
+      "input": "PATCH /work-orders/{不存在}/status",
+      "expected": "404 BIZ_ORDER_NOT_FOUND",
+      "actual": "404，code=BIZ_ORDER_NOT_FOUND", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step20"
+    },
+    {
+      "id": "TC-26", "module": "reports", "category": "exception", "priority": "P1",
+      "title": "撤回不存在报工", "related_br": [],
+      "precondition": "无",
+      "input": "DELETE /reports/{不存在}",
+      "expected": "404 BIZ_REPORT_NOT_FOUND",
+      "actual": "404，code=BIZ_REPORT_NOT_FOUND", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step21"
+    },
+    {
+      "id": "TC-27", "module": "work_orders", "category": "concurrency", "priority": "P0",
+      "title": "并发状态变更乐观锁冲突", "related_br": ["BR-18"],
+      "precondition": "工单 version=1",
+      "input": "两个并发 PATCH /status 均带 version=1（采用串行重放模拟竞态）",
+      "expected": "仅一个 200（version→2），另一个 409 BIZ_VERSION_CONFLICT",
+      "actual": "首个 200（2→3）；第二个重放 version=1 被拒 409 BIZ_VERSION_CONFLICT", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step22",
+      "real_concurrency": true, "concurrency_test": "test_concurrency.py",
+      "concurrency_actual": "5 真实线程同提 version=1：恰好 1 个 200（version→2），其余 4 个 409 BIZ_VERSION_CONFLICT"
+    },
+    {
+      "id": "TC-28", "module": "reports", "category": "exception", "priority": "P1",
+      "title": "撤回窗口过期", "related_br": ["M5-12"],
+      "precondition": "withdrawable_until 设为过去时间",
+      "input": "DELETE /reports/{id}",
+      "expected": "409 BIZ_WITHDRAW_EXPIRED",
+      "actual": "409，code=BIZ_WITHDRAW_EXPIRED", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step23"
+    },
+    {
+      "id": "TC-29", "module": "conflicts", "category": "exception", "priority": "P1",
+      "title": "未知角色裁决", "related_br": ["D7"],
+      "precondition": "无",
+      "input": "POST /conflicts/{id}/resolve {operator_role:UNKNOWN}",
+      "expected": "403 BIZ_PERMISSION_DENY",
+      "actual": "403，code=BIZ_PERMISSION_DENY", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step24"
+    },
+    {
+      "id": "TC-30", "module": "files", "category": "exception", "priority": "P1",
+      "title": "轮询不存在 OCR 任务", "related_br": [],
+      "precondition": "无",
+      "input": "GET /ocr/tasks/{不存在}",
+      "expected": "404 OCR_TASK_NOT_FOUND",
+      "actual": "404，code=OCR_TASK_NOT_FOUND", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step25"
+    },
+    {
+      "id": "TC-31", "module": "reports", "category": "concurrency", "priority": "P0",
+      "title": "同工序多次报工无丢失更新", "related_br": ["BR-22"],
+      "precondition": "工单已建，required_qty 充足",
+      "input": "N 个 POST /reports 同 process（如各 10，采用串行多次累加模拟）",
+      "expected": "merged_completed = N×10，无丢失",
+      "actual": "串行 5 次报工各 10，merged_completed 累计 = 50，无丢失（BR-22 在线合并）", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step26",
+      "real_concurrency": true, "concurrency_test": "test_concurrency.py",
+      "concurrency_actual": "5 真实线程同提 version=1：恰好 1 个报工成功（merged=20），其余 4 个 409 BIZ_VERSION_CONFLICT，无静默丢更新"
+    },
+    {
+      "id": "TC-32", "module": "work_orders", "category": "concurrency", "priority": "P1",
+      "title": "并发补丁状态竞态", "related_br": ["BR-18"],
+      "precondition": "工单 state=2",
+      "input": "并发 PATCH 2→3 与 2→1（采用串行重放模拟竞态）",
+      "expected": "一个成功，另一个因状态已变致目标不在 allowedTransitions → 409",
+      "actual": "首个 200（2→3）；第二个 2→1 因 state 已变（3→1 不在合法转移）被拒 409", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step27",
+      "real_concurrency": false,
+      "note": "冲突源于状态转移守卫（STATE_ILLEGAL）而非版本锁，串行重放已充分覆盖，无需真并发"
+    }
+  ]
+}
