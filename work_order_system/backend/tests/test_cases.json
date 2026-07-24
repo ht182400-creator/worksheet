@@ -346,6 +346,16 @@
       "actual": "test_smoke_db.py#step32 全部断言 PASS（assignee_openid 回写、worker 注册余量=3、配额=3、未注册 404、分发变更 200）", "result": "PASS",
       "automated": true, "test_step": "test_smoke_db.py#step32",
       "note": "_wechat_push.push_work_order_event 在 WX_PUSH_ENABLED=False 时直接返回 skipped，无网络调用；推送成功才扣减 subscribe_quota；43101(未授权) 静默降级，依赖小程序轮询 pending-tasks 兜底"
+    },
+    {
+      "id": "TC-41", "module": "wechat", "category": "functional", "priority": "P0",
+      "title": "微信小程序 code 换 openid + 按 openid 过滤待办", "related_br": ["订阅消息推送", "小程序端"],
+      "precondition": "新增 _wx_auth.code2session（jscode2session）；api/wechat.py 提供 POST /wechat/code2session 与 GET /wechat/subscribe-config；POST /workers 支持 code 换 openid；store.pending_tasks 支持 assignee_openid 过滤（join work_orders）",
+      "input": "POST /wechat/code2session{code}(未配置→502) + mock code2session 后 POST /workers{code} + GET /workers/by-openid + 建两单各带 assignee_openid 与工序 + GET /pending-tasks?assignee_openid=",
+      "expected": "未配置 AppID/Secret 时 code2session 返回 502 BIZ_WX_NOT_CONFIGURED；用 code 注册落库 openid=o_from_code_456、配额=2；按 openid 过滤仅返回本人工序（1 条），不过滤返回≥2 条",
+      "actual": "test_smoke_db.py#step33 全部断言 PASS（33a 502、33b code 换 openid 注册+配额、33c 仅本人工序）", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step33",
+      "note": "code2session 用标准库 urllib 调 api.weixin.qq.com；出于安全仅回传 openid 不回传 session_key；WorkerRegister.openid 改为可选、与 code 二选一；pending-tasks 过滤 join WorkOrderORM.assignee_openid"
     }
   ]
 }

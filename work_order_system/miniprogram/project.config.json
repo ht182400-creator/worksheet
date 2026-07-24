@@ -1,0 +1,17 @@
+{
+  "description": "工单智能识别与扫码分发系统 - 微信小程序端（订阅消息推送 + 我的待办）",
+  "packOptions": { "ignore": [], "include": [] },
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "newFeature": true
+  },
+  "compileType": "miniprogram",
+  "libVersion": "3.0.0",
+  "appid": "wxYOUR_APPID_HERE",
+  "projectname": "work-order-miniprogram",
+  "condition": {}
+}

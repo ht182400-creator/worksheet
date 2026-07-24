@@ -1,0 +1,9 @@
+.bar { display:flex; justify-content:space-between; align-items:center; margin-bottom:16rpx; }
+.tip { color:#999; font-size:24rpx; }
+.mini-btn { background:#07c160; color:#fff; }
+.empty { text-align:center; color:#999; padding:80rpx 0; }
+.task { background:#fff; border-radius:16rpx; padding:24rpx; margin-bottom:20rpx; }
+.line { display:flex; justify-content:space-between; padding:8rpx 0; }
+.k { color:#888; font-size:26rpx; }
+.v { color:#222; font-size:26rpx; }
+.v.strong { color:#fa5151; font-weight:bold; }

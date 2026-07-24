@@ -1,0 +1,8 @@
+.card { background:#fff; border-radius:16rpx; padding:24rpx; margin-bottom:24rpx; }
+.row { display:flex; justify-content:space-between; align-items:center; padding:12rpx 0; }
+.label { color:#888; font-size:28rpx; }
+.value { color:#222; font-size:28rpx; }
+.value.small { font-size:22rpx; word-break:break-all; }
+.input { border:1rpx solid #eee; border-radius:12rpx; padding:16rpx; margin:12rpx 0; font-size:28rpx; }
+.btn { margin-top:16rpx; background:#07c160; color:#fff; }
+.btn-ghost { background:#fff; color:#07c160; border:1rpx solid #07c160; }

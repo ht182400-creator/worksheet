@@ -555,9 +555,21 @@ def _run_ocr_task(task_id: str) -> None:
         db.close()
 
 
-def pending_tasks(db, operator_id: Optional[str] = None, state: Optional[int] = None) -> List[dict]:
-    """工人待办任务（过滤参数，V4.1 落实）。返回工序级待报工列表。"""
-    stmt = select(OrderProcessORM)
+def pending_tasks(db, operator_id: Optional[str] = None, state: Optional[int] = None,
+                  assignee_openid: Optional[str] = None) -> List[dict]:
+    """工人待办任务（过滤参数，V4.1 落实）。返回工序级待报工列表。
+
+    新增 ``assignee_openid`` 过滤（§新增推送）：仅返回指派给该工人的工单下的工序，
+    供微信小程序按 openid 拉取"我的待办"（工单主表 work_orders.assignee_openid 关联）。
+    """
+    if assignee_openid:
+        stmt = (
+            select(OrderProcessORM)
+            .join(WorkOrderORM, OrderProcessORM.order_uuid == WorkOrderORM.order_uuid)
+            .where(WorkOrderORM.assignee_openid == assignee_openid)
+        )
+    else:
+        stmt = select(OrderProcessORM)
     rows = db.scalars(stmt).all()
     tasks = []
     for r in rows:

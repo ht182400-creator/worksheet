@@ -290,6 +290,39 @@ _r40d = client.patch(f"/api/v1/work-orders/{_r40_uuid}/status",
                      json={"target_state": 3, "version": _r40_ver, "operator_id": "op1"})
 _assert(_r40d.status_code == 200, f"tc40 分发变更 200 (got {_r40d.status_code})")
 
+# 33. 微信小程序：code2session 接口 + code 换 openid 注册 + 按 openid 过滤待办（TC-41）
+# 33a. 未配置 AppID/Secret 时，code2session 应返回 502 BIZ_WX_NOT_CONFIGURED（验证接线正确）
+_r41cfg = client.post("/api/v1/wechat/code2session", json={"code": "anycode"})
+_assert(_r41cfg.status_code == 502 and _r41cfg.json()["code"] == "BIZ_WX_NOT_CONFIGURED",
+        f"tc41 code2session 未配置 502 (got {_r41cfg.status_code}/{_r41cfg.json().get('code')})")
+
+# 33b. 用 code 注册：mock 微信换取，验证后端以 code 换 openid 并落库
+import app._wx_auth as _wx_auth_mod  # noqa: E402
+_orig_code2session = _wx_auth_mod.code2session
+_wx_auth_mod.code2session = lambda code: {"openid": "o_from_code_456", "session_key": "sk"}
+try:
+    _r41reg = client.post("/api/v1/workers", json={"code": "wxlogin_code", "tenant_id": TENANT, "subscribe_quota": 2})
+    _assert(_r41reg.status_code == 200 and _r41reg.json()["data"]["openid"] == "o_from_code_456", "tc41 code 换 openid 注册")
+    _r41q = client.get("/api/v1/workers/by-openid/o_from_code_456")
+    _assert(_r41q.status_code == 200 and _r41q.json()["data"]["subscribe_quota"] == 2, "tc41 code 注册后配额")
+finally:
+    _wx_auth_mod.code2session = _orig_code2session  # 还原，避免影响其它用例
+
+# 33c. 按 openid 过滤待办：建两个指派订单 + 各一工序，验证仅返回本人工序
+_sess41 = app.db.SessionLocal()
+_oid_a = client.post("/api/v1/work-orders", json={"display_no": "WO-FILTER-A", "tenant_id": TENANT, "assignee_openid": "o_filter_1"}).json()["data"]["order_uuid"]
+_oid_b = client.post("/api/v1/work-orders", json={"display_no": "WO-FILTER-B", "tenant_id": TENANT, "assignee_openid": "o_filter_2"}).json()["data"]["order_uuid"]
+_sess41.add(app.db.OrderProcessORM(order_uuid=_oid_a, process_code="P_A", required_qty=10, completed_qty=2))
+_sess41.add(app.db.OrderProcessORM(order_uuid=_oid_b, process_code="P_B", required_qty=20, completed_qty=5))
+_sess41.commit()
+_sess41.close()
+_r41t = client.get("/api/v1/pending-tasks?assignee_openid=o_filter_1")
+_assert(_r41t.status_code == 200, "tc41 待办过滤 200")
+_tasks41 = _r41t.json()["data"]
+_assert(len(_tasks41) == 1 and _tasks41[0]["process_code"] == "P_A", f"tc41 仅返回本人工序 (got {[t['process_code'] for t in _tasks41]})")
+_r41all = client.get("/api/v1/pending-tasks")
+_assert(len(_r41all.json()["data"]) >= 2, "tc41 不过滤返回多条")
+
 _t("ALL_DB_SMOKE_PASS")
 # 清理临时库：先释放连接池（Windows 文件锁），失败仅告警不阻碍结果
 try:

@@ -1,0 +1,15 @@
+<view class="container">
+  <view class="bar">
+    <text class="tip">更新于 {{lastUpdate || '—'}}</text>
+    <button class="mini-btn" size="mini" bindtap="onSubscribe">订阅提醒</button>
+  </view>
+
+  <view wx:if="{{tasks.length === 0 && !loading}}" class="empty">暂无待办工单</view>
+
+  <view wx:for="{{tasks}}" wx:key="order_uuid" class="task">
+    <view class="line"><text class="k">工单</text><text class="v">{{item.order_uuid}}</text></view>
+    <view class="line"><text class="k">工序</text><text class="v">{{item.process_code}}</text></view>
+    <view class="line"><text class="k">计划/已报</text><text class="v">{{item.required_qty}} / {{item.completed_qty}}</text></view>
+    <view class="line"><text class="k">剩余</text><text class="v strong">{{item.remaining_qty}}</text></view>
+  </view>
+</view>

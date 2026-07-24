@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import SERVICE_HOST, SERVICE_PORT, API_V1_PREFIX
 from app.logger import get_logger
-from app.api import work_orders, reports, qrcode, files, conflicts, bigscreen, worker
+from app.api import work_orders, reports, qrcode, files, conflicts, bigscreen, worker, wechat
 from app.db import init_db, DB_URL
 
 log = get_logger(__name__)
@@ -27,6 +27,7 @@ app.include_router(files.router, prefix=API_V1_PREFIX)
 app.include_router(conflicts.router, prefix=API_V1_PREFIX)
 app.include_router(bigscreen.router, prefix=API_V1_PREFIX)
 app.include_router(worker.router, prefix=API_V1_PREFIX)
+app.include_router(wechat.router, prefix=API_V1_PREFIX)
 
 
 @app.on_event("startup")

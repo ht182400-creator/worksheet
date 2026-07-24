@@ -30,7 +30,8 @@ class WorkOrder(BaseModel):
 
 class WorkerRegister(BaseModel):
     """工人（小程序用户）注册/更新请求体（§新增推送）。"""
-    openid: str
+    openid: Optional[str] = None  # 直接提供 openid；或与 code 二选一
+    code: Optional[str] = None    # wx.login 临时凭证，由后端换 openid
     name: Optional[str] = None
     tenant_id: str
     subscribe_quota: int = 0  # 一次性订阅剩余授权数（小程序侧授权后上报）

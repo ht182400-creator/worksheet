@@ -30,9 +30,11 @@
 | 12 | POST | `/conflicts/{conflict_id}/resolve` | 主管 | 防竞态 | 冲突裁决 |
 | 15 | POST | `/ocr/parse-text` | 文员 | — | 外部已识别原文 → 字段解析（可选；主路径见 #10/#11 后端原生 OCR，方案 A） |
 | 13 | GET | `/bigscreen/metrics` | 大屏 | — | SSE 指标流 |
-| 14 | GET | `/pending-tasks` | 工人 | — | 工人待办 |
-| 15 | POST | `/workers` | 小程序 | — | 工人注册/更新（openid + 订阅授权余量，§新增推送） |
+| 14 | GET | `/pending-tasks` | 工人/小程序 | — | 工人待办（新增 `assignee_openid` 过滤，"我的待办"） |
+| 15 | POST | `/workers` | 小程序 | — | 工人注册/更新（openid + 订阅授权余量，§新增推送；或传 `code` 由后端换 openid） |
 | 16 | GET | `/workers/by-openid/{openid}` | 小程序 | — | 查询工人订阅授权余量（§新增推送） |
+| 17 | POST | `/wechat/code2session` | 小程序 | — | wx.login 的 `code` → openid（§新增推送，安全起见不回传 session_key） |
+| 18 | GET | `/wechat/subscribe-config` | 小程序 | — | 下发订阅消息配置（template_id / page / enabled） |
 | — | GET | `/health` | — | — | 健康检查（部署探针） |
 
 ## 关键接口契约
@@ -171,18 +173,31 @@
 - 检测 `http.disconnect` 退出；`server_ts` 供新鲜度计算（BR-19/D5）
 
 ### 14. GET /pending-tasks
-查询：`operator_id?`, `state?`
+查询：`operator_id?`, `state?`, `assignee_openid?`（§新增推送：按工单人 openid 过滤，仅返回其被指派工单下的工序；小程序拉取"我的待办"）
 响应：`200 {data:[{order_uuid, process_code, required_qty, completed_qty, remaining_qty}]}`
 
 ### 15. POST /workers
-请求：`WorkerRegister{openid, name?, tenant_id, subscribe_quota?}`
-- 小程序登录拿到 `openid` 后注册；`subscribe_quota` 上报用户已授权的一次性订阅剩余条数。
+请求：`WorkerRegister{openid?, code?, name?, tenant_id, subscribe_quota?}`
+- `openid` 与 `code` 二选一：直接传 `openid` 注册；或传 wx.login 的 `code`，由后端调微信 `jscode2session` 换取 `openid`（小程序无法直连微信拿 openid）。
+- `subscribe_quota` 上报用户已授权的一次性订阅剩余条数（每次 `wx.requestSubscribeMessage` 授权 +1）。
 响应：`200 {code:"0", data:{openid, subscribe_quota}, traceId:...}`
-错误：`500 BIZ_WORKER_REGISTER_FAILED`
+错误：`400 BIZ_WORKER_OPENID_REQUIRED`（openid 与 code 都未给）/ `502 BIZ_WX_NOT_CONFIGURED`（未配置 WX_APPID/WX_APPSECRET）/ `502 BIZ_WX_CODE2SESSION_FAILED`（微信换取失败，如 code 无效）/ `500 BIZ_WORKER_REGISTER_FAILED`
 
 ### 16. GET /workers/by-openid/{openid}
 响应：`200 {code:"0", data:{openid, subscribe_quota}, traceId:...}`
 错误：`404 BIZ_WORKER_NOT_FOUND`（工人未注册）
+
+### 17. POST /wechat/code2session
+请求：`{code}`（wx.login 返回的临时登录凭证，5 分钟有效、一次性）
+响应：`200 {code:"0", data:{openid}, traceId:...}`（出于安全仅回传 openid，不回传 session_key）
+错误：`502 BIZ_WX_NOT_CONFIGURED`（未配置 WX_APPID/WX_APPSECRET，环境变量注入）/ `502 BIZ_WX_CODE2SESSION_FAILED`（微信换取失败，如 `40029` code 无效、`40163` code 已使用、`45011` 频率限制）
+
+> 说明（§新增推送）：小程序端 `wx.login()` 只能拿到 `code`，必须后端持 `WX_APPSECRET` 调微信 `jscode2session` 才能换取 `openid`。前端绝不可持有 `WX_APPSECRET`。
+
+### 18. GET /wechat/subscribe-config
+响应：`200 {code:"0", data:{enabled, template_id, page}, traceId:...}`
+- `enabled`：`WX_PUSH_ENABLED`；`template_id`：`WX_SUBSCRIBE_TEMPLATE_ID`（需与小程序后台所选模板一致）；`page`：`WX_SUBSCRIBE_PAGE`（点击订阅消息跳转页，默认 `pages/todo/todo`）。
+- 小程序启动时拉一次即可，不必硬编码模板 id。
 
 ## 契约一致性检查
 
