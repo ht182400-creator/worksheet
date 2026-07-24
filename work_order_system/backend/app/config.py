@@ -1,4 +1,5 @@
 """后端配置常量（禁止硬编码魔法值，统一 UPPER_SNAKE_CASE）。"""
+import os
 from pathlib import Path
 
 # 服务配置
@@ -87,3 +88,25 @@ TESSERACT_CMD_CANDIDATES = (
 BIGSCREEN_PUSH_INTERVAL_SECONDS = 3   # 大屏 SSE 推送间隔（≤5s，§25.2.8 / BR-19）
 ORDER_NOT_FOUND_CODE = "BIZ_ORDER_NOT_FOUND"
 REPORT_NOT_FOUND_CODE = "BIZ_REPORT_NOT_FOUND"
+
+# 微信小程序订阅消息推送（工单→工人，§新增）。WX_PUSH_ENABLED=False 时全链路 no-op。
+# 密钥经环境变量注入，禁止硬编码；配置 appid/secret 并确认模板后改 True。
+WX_PUSH_ENABLED = False                # 总开关：配置 appid/secret 且确认模板后改 True
+WX_APPID = os.getenv("WX_APPID", "")               # 小程序 appid（环境变量注入，避免硬编码密钥）
+WX_APPSECRET = os.getenv("WX_APPSECRET", "")       # 小程序 secret（环境变量注入）
+WX_SUBSCRIBE_TEMPLATE_ID = os.getenv("WX_SUBSCRIBE_TEMPLATE_ID", "")  # 订阅消息模板 ID
+WX_ACCESS_TOKEN_TTL_SECONDS = 7200     # 微信 access_token 官方有效期（2h）
+WX_TOKEN_REFRESH_THRESHOLD = 300       # 距过期 <300s 即刷新（提前量，防临界失效）
+WX_HTTP_TIMEOUT = 5                    # 微信接口 HTTP 超时（秒）
+WX_SUBSCRIBE_PAGE = "pages/todo/todo"  # 点击订阅消息跳转的小程序页面（按实际页面路径调整）
+# 订阅消息模板字段映射（keyword→格式化串）：需与小程序后台所选模板的关键词顺序/类型一致。
+# 微信订阅消息单字段值上限 20 字；未匹配到的占位符置空。
+WX_TEMPLATE_FIELDS = {
+    "thing1": "{display_no}",
+    "thing2": "{product}",
+    "number1": "{plan_qty}",
+    "thing3": "{event_hint}",
+}
+
+# 工单状态常量（状态机权威源见 state_machine.py / §03）
+WORK_ORDER_STATE_DISPATCHED = 3        # 已分发（GEN_QRCODE）：触发"派活"推送（两处都推之一）

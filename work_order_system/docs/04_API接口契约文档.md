@@ -31,14 +31,19 @@
 | 15 | POST | `/ocr/parse-text` | 文员 | — | 外部已识别原文 → 字段解析（可选；主路径见 #10/#11 后端原生 OCR，方案 A） |
 | 13 | GET | `/bigscreen/metrics` | 大屏 | — | SSE 指标流 |
 | 14 | GET | `/pending-tasks` | 工人 | — | 工人待办 |
+| 15 | POST | `/workers` | 小程序 | — | 工人注册/更新（openid + 订阅授权余量，§新增推送） |
+| 16 | GET | `/workers/by-openid/{openid}` | 小程序 | — | 查询工人订阅授权余量（§新增推送） |
 | — | GET | `/health` | — | — | 健康检查（部署探针） |
 
 ## 关键接口契约
 
 ### 1. POST /work-orders
-请求：`WorkOrderCreate{display_no, tenant_id, doc_confidence?, need_review?}`
-响应：`200 {"code":"0","data":WorkOrder,"traceId":...}`
+请求：`WorkOrderCreate{display_no, tenant_id, doc_confidence?, need_review?, assignee_openid?}`
+- `assignee_openid?`：指定工单人的微信 openid（§新增推送）。填了则在**入库成功后**异步推送订阅消息（"新工单已入库"）；为空则不推送。
+响应：`200 {"code":"0","data":WorkOrder,"traceId":...}`（含 `assignee_openid`）
 错误：`500 BIZ_CREATE_FAILED` / `409 BIZ_WORK_ORDER_DUPLICATE`（display_no 已存在，禁止重复入库回填）
+
+> 推送说明（§新增）：微信小程序**订阅消息**为唯一主动触达通道，需工人在小程序内授权模板；`WX_PUSH_ENABLED=False`（默认）时推送为 no-op，不影响主流程。第二处推送在状态变为**已分发(state=3)** 时触发（"派活提醒"）。推送失败（如 `43101` 用户未授权）仅告警降级，由小程序轮询 `GET /pending-tasks` 兜底。
 
 ### 3. GET /work-orders/{id}/state-machine
 响应：`200 {current_state, allowed_transitions:[int], visible_buttons:[str], version}`
@@ -168,6 +173,16 @@
 ### 14. GET /pending-tasks
 查询：`operator_id?`, `state?`
 响应：`200 {data:[{order_uuid, process_code, required_qty, completed_qty, remaining_qty}]}`
+
+### 15. POST /workers
+请求：`WorkerRegister{openid, name?, tenant_id, subscribe_quota?}`
+- 小程序登录拿到 `openid` 后注册；`subscribe_quota` 上报用户已授权的一次性订阅剩余条数。
+响应：`200 {code:"0", data:{openid, subscribe_quota}, traceId:...}`
+错误：`500 BIZ_WORKER_REGISTER_FAILED`
+
+### 16. GET /workers/by-openid/{openid}
+响应：`200 {code:"0", data:{openid, subscribe_quota}, traceId:...}`
+错误：`404 BIZ_WORKER_NOT_FOUND`（工人未注册）
 
 ## 契约一致性检查
 

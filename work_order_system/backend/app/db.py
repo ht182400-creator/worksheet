@@ -20,6 +20,9 @@ from sqlalchemy import (
     create_engine,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
+from app.logger import get_logger
+
+log = get_logger(__name__)
 
 # 数据库地址：默认本地 SQLite 文件；测试通过环境变量覆盖为内存/临时库
 DB_URL = os.getenv("WORK_ORDER_DB_URL", "sqlite:///./work_order_system.db")
@@ -50,6 +53,7 @@ class WorkOrderORM(Base):
     version = Column(Integer, nullable=False, default=1)  # 乐观锁
     doc_confidence = Column(Float, nullable=True)
     need_review = Column(Boolean, nullable=False, default=False)
+    assignee_openid = Column(String(64), nullable=True, index=True)  # 指定工单人微信 openid（§新增订阅消息推送）
     created_at = Column(DateTime, nullable=False, default=_now)
     updated_at = Column(DateTime, nullable=False, default=_now)
 
@@ -132,6 +136,25 @@ class OcrTaskORM(Base):
     created_at = Column(DateTime, nullable=False, default=_now)
 
 
+class WorkerORM(Base):
+    """工人（微信小程序用户）表：openid 映射 + 订阅消息授权余量（§新增推送）。
+
+    小程序登录拿到 openid 后由 ``POST /workers`` 注册；``subscribe_quota`` 记录
+    用户已授权的一次性订阅剩余条数，推送成功后扣减（见 store._push_to_worker）。
+    """
+
+    __tablename__ = "workers"
+
+    worker_id = Column(String(36), primary_key=True)
+    openid = Column(String(64), nullable=False, unique=True, index=True)
+    name = Column(String(64), nullable=True)
+    tenant_id = Column(String(36), nullable=False, index=True)
+    subscribe_quota = Column(Integer, nullable=False, default=0)  # 一次性订阅剩余授权数
+    last_push_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=_now)
+    updated_at = Column(DateTime, nullable=False, default=_now)
+
+
 def _migrate_ocr_task_columns() -> None:
     """旧库兼容迁移：为 ocr_tasks 补加 stage/progress/message 列（首次部署新列时执行）。
 
@@ -163,6 +186,26 @@ def init_db() -> None:
     """创建全部表（生产应在迁移工具中执行，此处仅骨架便利）。"""
     Base.metadata.create_all(bind=engine)
     _migrate_ocr_task_columns()
+    _migrate_work_order_columns()
+
+
+def _migrate_work_order_columns() -> None:
+    """旧库兼容迁移：为 work_orders 补加 assignee_openid 列（首次部署新列时执行）。"""
+    from sqlalchemy import inspect
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("work_orders"):
+            return
+        existing = {c["name"] for c in insp.get_columns("work_orders")}
+        needed = {"assignee_openid": "VARCHAR(64)"}
+        with engine.begin() as conn:
+            for col, ddl in needed.items():
+                if col not in existing:
+                    log.info("工单表迁移：新增列 %s", col)
+                    conn.execute(text(f"ALTER TABLE work_orders ADD COLUMN {col} {ddl}"))
+    except Exception as exc:  # noqa: BLE001 - 迁移失败不应阻断启动
+        log.error("工单表迁移异常: %s\n%s", exc, traceback.format_exc())
 
 
 def get_db():

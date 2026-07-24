@@ -11,6 +11,7 @@ class WorkOrderCreate(BaseModel):
     tenant_id: str
     doc_confidence: Optional[float] = None
     need_review: bool = False
+    assignee_openid: Optional[str] = None  # 指定工单人的微信 openid（订阅消息推送目标，§新增）
 
 
 class WorkOrder(BaseModel):
@@ -22,8 +23,17 @@ class WorkOrder(BaseModel):
     version: int = 1
     doc_confidence: Optional[float] = None
     need_review: bool = False
+    assignee_openid: Optional[str] = None  # 指定工单人的微信 openid（§新增推送）
     created_at: datetime
     updated_at: datetime
+
+
+class WorkerRegister(BaseModel):
+    """工人（小程序用户）注册/更新请求体（§新增推送）。"""
+    openid: str
+    name: Optional[str] = None
+    tenant_id: str
+    subscribe_quota: int = 0  # 一次性订阅剩余授权数（小程序侧授权后上报）
 
 
 class StateMachineOut(BaseModel):

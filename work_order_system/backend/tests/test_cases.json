@@ -336,6 +336,16 @@
       "actual": "test_smoke_db.py#step31 上传图片后轮询，seen_stages≥2、progress 终态=100，PASS", "result": "PASS",
       "automated": true, "test_step": "test_smoke_db.py#step31",
       "note": "解析改为后台线程异步执行（不再阻塞上传/轮询请求）；progress 为真实百分比（非假动画）；旧库 ocr_tasks 经 init_db 迁移自动补列"
+    },
+    {
+      "id": "TC-40", "module": "workers", "category": "functional", "priority": "P0",
+      "title": "工单人微信推送骨架（assignee_openid 落库 + worker 注册/配额 + 关闭 no-op）", "related_br": ["订阅消息推送"],
+      "precondition": "WorkOrderORM 加 assignee_openid；新增 WorkerORM(openid+subscribe_quota)；store 在 create_work_order(入库) 与 apply_status_change(state=3 已分发) 异步触发 _wechat_push；WX_PUSH_ENABLED=False 默认",
+      "input": "POST /work-orders{assignee_openid} + POST /workers{openid,quota=3} + GET /workers/by-openid/{openid} + GET 未注册 + PATCH /work-orders/{id}/status{target_state:3}",
+      "expected": "建单 assignee_openid 回写；worker 注册余量=3；配额查询=3；未注册 404；WX 关闭时分发变更 200 且不触发真实推送",
+      "actual": "test_smoke_db.py#step32 全部断言 PASS（assignee_openid 回写、worker 注册余量=3、配额=3、未注册 404、分发变更 200）", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step32",
+      "note": "_wechat_push.push_work_order_event 在 WX_PUSH_ENABLED=False 时直接返回 skipped，无网络调用；推送成功才扣减 subscribe_quota；43101(未授权) 静默降级，依赖小程序轮询 pending-tasks 兜底"
     }
   ]
 }

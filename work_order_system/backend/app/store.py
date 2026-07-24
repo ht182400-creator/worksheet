@@ -24,6 +24,8 @@ from app.config import (
     OCR_ENGINE_PDF_LAYER,
     OCR_ENGINE_SERVER,
     WORK_ORDER_DUPLICATE_CODE,
+    WX_SUBSCRIBE_PAGE,
+    WORK_ORDER_STATE_DISPATCHED,
     OCR_STAGE_QUEUED,
     OCR_STAGE_TEXT_LAYER,
     OCR_STAGE_RENDER_OCR,
@@ -45,8 +47,10 @@ from app.db import (
     ConflictLogORM,
     QrcodePrintTaskORM,
     OcrTaskORM,
+    WorkerORM,
     SessionLocal,
 )
+import app._wechat_push as _wechat_push
 from app.models import WorkOrder, ReportOut
 
 
@@ -70,6 +74,7 @@ def _to_work_order(orm: WorkOrderORM) -> WorkOrder:
         version=orm.version,
         doc_confidence=orm.doc_confidence,
         need_review=orm.need_review,
+        assignee_openid=orm.assignee_openid,
         created_at=orm.created_at,
         updated_at=orm.updated_at,
     )
@@ -99,13 +104,94 @@ def create_work_order(db, payload) -> WorkOrder:
         tenant_id=payload.tenant_id,
         doc_confidence=payload.doc_confidence,
         need_review=payload.need_review,
+        assignee_openid=payload.assignee_openid,
         created_at=now,
         updated_at=now,
     )
     db.add(orm)
     db.commit()
     db.refresh(orm)
+    log.info("创建工单 %s display_no=%s assignee=%s", orm.order_uuid, orm.display_no, orm.assignee_openid)
+    # 入库即推（两处都推之一）：指定工单人时异步推送订阅消息，不阻塞响应
+    if orm.assignee_openid:
+        _spawn_push(orm.assignee_openid, "CREATE", {
+            "display_no": orm.display_no,
+            "product": "—",
+            "plan_qty": "—",
+            "event_hint": "新工单已入库，请关注处理",
+        })
     return _to_work_order(orm)
+
+
+def _spawn_push(openid: str, event: str, ctx: dict) -> None:
+    """启动后台线程异步推送订阅消息（不阻塞工单接口响应，沿用 OCR 后台线程模式）。"""
+    threading.Thread(target=_push_to_worker, args=(openid, event, ctx), daemon=True).start()
+
+
+def _push_to_worker(openid: str, event: str, ctx: dict) -> None:
+    """后台线程：推送订阅消息并在成功后扣减授权余量（失败仅告警，不阻断主流程）。"""
+    try:
+        result = _wechat_push.push_work_order_event(openid, event, ctx, page=WX_SUBSCRIBE_PAGE)
+        if result.get("ok"):
+            _decr_worker_quota(openid)
+            log.info("订阅消息推送成功 openid=%s event=%s", openid, event)
+        elif result.get("declined"):
+            log.info("订阅消息未授权(43101) openid=%s event=%s，依赖小程序轮询兜底", openid, event)
+        elif result.get("skipped"):
+            log.debug("订阅消息未启用，跳过推送 openid=%s event=%s", openid, event)
+        else:
+            log.warning("订阅消息推送失败 openid=%s event=%s errcode=%s", openid, event, result.get("errcode"))
+    except Exception as exc:  # noqa: BLE001
+        log.error("推送线程异常 openid=%s: %s\n%s", openid, exc, traceback.format_exc())
+
+
+def _decr_worker_quota(openid: str) -> None:
+    """推送成功后扣减工人一次性订阅授权余量（线程内独立会话）。"""
+    db = SessionLocal()
+    try:
+        w = db.execute(select(WorkerORM).where(WorkerORM.openid == openid)).scalars().first()
+        if w is not None:
+            if w.subscribe_quota > 0:
+                w.subscribe_quota -= 1
+            w.last_push_at = datetime.utcnow()
+            db.commit()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("工人授权余量扣减失败 openid=%s: %s", openid, exc)
+    finally:
+        db.close()
+
+
+def upsert_worker(db: Session, openid: str, name: Optional[str], tenant_id: str,
+                  subscribe_quota: int = 0) -> WorkerORM:
+    """注册/更新工人（小程序登录后上报 openid + 授权余量，§新增推送）。"""
+    existing = db.execute(select(WorkerORM).where(WorkerORM.openid == openid)).scalars().first()
+    if existing is not None:
+        existing.name = name if name is not None else existing.name
+        existing.tenant_id = tenant_id
+        existing.subscribe_quota = subscribe_quota
+        existing.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(existing)
+        return existing
+    w = WorkerORM(
+        worker_id=str(uuid.uuid4()),
+        openid=openid,
+        name=name,
+        tenant_id=tenant_id,
+        subscribe_quota=subscribe_quota,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.add(w)
+    db.commit()
+    db.refresh(w)
+    return w
+
+
+def get_worker_quota(db: Session, openid: str) -> Optional[int]:
+    """查询工人剩余订阅授权余量（无记录返回 None）。"""
+    w = db.execute(select(WorkerORM).where(WorkerORM.openid == openid)).scalars().first()
+    return w.subscribe_quota if w is not None else None
 
 
 def get_work_order(db, order_id: str) -> Optional[WorkOrder]:
@@ -139,6 +225,14 @@ def apply_status_change(db, order_id: str, target_state: int, version: int) -> O
     # 重新加载以返回最新版本号（核心 UPDATE 不更新会话内已缓存的 ORM 对象）
     orm = db.get(WorkOrderORM, order_id)
     db.refresh(orm)
+    # 已分发（GEN_QRCODE）→ 触发"派活"推送（两处都推之二）
+    if target_state == WORK_ORDER_STATE_DISPATCHED and orm.assignee_openid:
+        _spawn_push(orm.assignee_openid, "DISPATCH", {
+            "display_no": orm.display_no,
+            "product": "—",
+            "plan_qty": "—",
+            "event_hint": "工单已分发，请安排投产",
+        })
     return _to_work_order(orm)
 
 

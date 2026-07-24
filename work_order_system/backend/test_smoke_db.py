@@ -32,6 +32,9 @@ def _assert(cond, msg):
         raise SystemExit(1)
 
 
+TENANT = "t1"  # 测试租户（与 step2 创建工单保持一致）
+
+
 # 1. 健康检查
 r = client.get("/health")
 _assert(r.status_code == 200 and r.json()["status"] == "ok", "health 200")
@@ -263,6 +266,29 @@ for _i in range(120):
 _assert(_final39 is not None, "TC-39 OCR 任务到达终态")
 _assert(_final39["progress"] == 100, f"TC-39 终态进度=100 (got {_final39['progress']})")
 _assert(len(_seen_stages) >= 2, f"TC-39 阶段有推进 (seen={sorted(_seen_stages)})")
+
+# 32. 工单人微信推送骨架（TC-40）：assignee_openid 落库 + worker 注册/配额 + 关闭时 no-op
+# 32a. 创建带 assignee_openid 的工单（推送默认关闭，应 no-op 不报错、字段正确回写）
+_r40 = client.post("/api/v1/work-orders", json={"display_no": "WO-2026-PUSH01",
+                                                "tenant_id": TENANT, "assignee_openid": "o_test_openid_123"})
+_assert(_r40.status_code == 200, f"tc40 建单 200 (got {_r40.status_code})")
+_assert(_r40.json()["data"].get("assignee_openid") == "o_test_openid_123", "tc40 assignee_openid 回写")
+_r40_uuid = _r40.json()["data"]["order_uuid"]
+_r40_ver = _r40.json()["data"]["version"]
+# 32b. 工人注册（小程序上报 openid + 授权余量）
+_r40w = client.post("/api/v1/workers", json={"openid": "o_test_openid_123",
+                                             "name": "张三", "tenant_id": TENANT, "subscribe_quota": 3})
+_assert(_r40w.status_code == 200 and _r40w.json()["data"]["subscribe_quota"] == 3, "tc40 worker 注册+余量")
+# 32c. 配额查询
+_r40q = client.get("/api/v1/workers/by-openid/o_test_openid_123")
+_assert(_r40q.status_code == 200 and _r40q.json()["data"]["subscribe_quota"] == 3, "tc40 配额查询")
+# 32d. 未注册工人查询 → 404
+_r40nf = client.get("/api/v1/workers/by-openid/nope")
+_assert(_r40nf.status_code == 404, f"tc40 未注册 404 (got {_r40nf.status_code})")
+# 32e. 推送开关关闭时后台线程 no-op：触发已分发状态变更（PATCH /status，带 version）不应抛错
+_r40d = client.patch(f"/api/v1/work-orders/{_r40_uuid}/status",
+                     json={"target_state": 3, "version": _r40_ver, "operator_id": "op1"})
+_assert(_r40d.status_code == 200, f"tc40 分发变更 200 (got {_r40d.status_code})")
 
 _t("ALL_DB_SMOKE_PASS")
 # 清理临时库：先释放连接池（Windows 文件锁），失败仅告警不阻碍结果
