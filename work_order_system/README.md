@@ -15,6 +15,9 @@ work_order_system/
 │   ├── test_smoke_db.py     # 端到端冒烟测试（23 步全绿）
 │   └── app/
 │       ├── config.py        # 常量（禁止硬编码）
+│       ├── _ocr.py          # 后端原生 Tesseract OCR（图片/PDF 预处理 + 识别，方案 A）
+│       ├── _field_parser.py # 工单字段规则化解析（M1-03 + 值模式兜底）
+│       ├── _pdf_extract.py  # PDF 文本层提取 / PyMuPDF 渲染
 │       ├── logger.py        # 日志（控制台 + 文件轮转）
 │       ├── db.py            # SQLAlchemy 数据库层（§26，6 张核心表）
 │       ├── state_machine.py # BR-18 状态转移矩阵（权威源）

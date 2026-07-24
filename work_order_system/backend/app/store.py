@@ -3,18 +3,28 @@
 所有函数接收 `db` 会话（由 FastAPI 依赖 get_db 注入）。业务校验失败抛
 BusinessError，由路由层转成统一 BIZ_* 错误响应（§25.1）。
 """
+import os
+import traceback
 import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Optional
 
 from sqlalchemy import select, update
+from sqlalchemy.orm import Session
+from app.logger import get_logger
+
+log = get_logger(__name__)
 
 from app.config import (
     DEFAULT_WITHDRAW_WINDOW_MINUTES,
     DEFAULT_DEMO_REQUIRED_QTY,
-    OCR_SAMPLE_DOC_CONFIDENCE,
-    OCR_SAMPLE_STATUS,
+    OCR_UPLOAD_DIR,
+    OCR_ENGINE_PDF_LAYER,
+    OCR_ENGINE_SERVER,
 )
+from app._field_parser import parse_work_order_fields
+from app._pdf_extract import OcrNoTextLayerError, extract_text
 from app.db import (
     WorkOrderORM,
     OrderProcessORM,
@@ -262,31 +272,108 @@ def resolve_conflict(db, conflict_id: str, payload) -> dict:
     return {"status": "RESOLVED", "strategy": strategy}
 
 
-def create_ocr_task(db, filename: str) -> str:
-    """OCR 文件上传入队（返回 taskId，BR-17）。"""
-    task_id = str(uuid.uuid4())
+def create_ocr_task(db: Session, filename: str, file_bytes: bytes) -> str:
+    """创建 OCR 识别任务（异步：落盘文件 + 返回 QUEUED，轮询时执行真实解析）。"""
+    task_id = f"OCR-{uuid.uuid4().hex[:12]}"
+    try:
+        OCR_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        ext = os.path.splitext(filename)[1].lower() or ".pdf"
+        save_path = OCR_UPLOAD_DIR / f"{task_id}{ext}"
+        save_path.write_bytes(file_bytes)
+    except Exception as exc:  # noqa: BLE001 - 落盘失败需明确抛出，前端据此重试
+        log.error("OCR 文件落盘失败 %s: %s\n%s", task_id, exc, traceback.format_exc())
+        raise BusinessError("OCR_SAVE_FAILED", 500, f"文件保存失败: {exc}")
     db.add(OcrTaskORM(task_id=task_id, status="QUEUED"))
     db.commit()
+    log.info("创建 OCR 任务 %s 文件=%s 落盘=%s", task_id, filename, save_path)
     return task_id
 
 
-def get_ocr_task(db, task_id: str) -> dict:
-    """轮询 OCR 任务终态（演示直接返回 DONE 样例，含字段置信度，BR-20）。"""
+def _find_ocr_file(task_id: str) -> Optional[Path]:
+    """按任务号查找落盘的临时上传文件。"""
+    if not OCR_UPLOAD_DIR.exists():
+        return None
+    matches = list(OCR_UPLOAD_DIR.glob(f"{task_id}*"))
+    return matches[0] if matches else None
+
+
+def get_ocr_task(db: Session, task_id: str) -> dict:
+    """轮询 OCR 任务结果（§25.2.1 BR-17）。
+
+    首次轮询（状态仍为 QUEUED）时执行真实 PDF 解析：提取文本 → 规则化抽取字段
+    → 计算置信度。解析失败按 M1-09/M1-10 降级为 FAILED 并给出明确错误。
+    """
     orm = db.get(OcrTaskORM, task_id)
     if orm is None:
         raise BusinessError("OCR_TASK_NOT_FOUND", "OCR 任务不存在", 404)
-    return {
-        "taskId": task_id,
-        "status": OCR_SAMPLE_STATUS,
-        "result": {
-            "fields": [
-                {"key": "display_no", "value": "WO-2026-001", "confidence": 0.98},
-                {"key": "qty", "value": "1000", "confidence": 0.99},
-            ],
-            "docConfidence": OCR_SAMPLE_DOC_CONFIDENCE,
-            "needReview": OCR_SAMPLE_DOC_CONFIDENCE < 0.6,
-        },
-    }
+    if orm.status != "QUEUED":
+        return {"taskId": task_id, "status": orm.status, "result": orm.result or {}}
+
+    save_path = _find_ocr_file(task_id)
+    try:
+        if not save_path or not save_path.exists():
+            raise OcrNoTextLayerError("未找到上传文件，请重新上传工单文件")
+        suffix = save_path.suffix.lower()
+        engine = ""
+        # 图片与 PDF 统一走后端原生 OCR（方案 A）；PDF 若含文本层优先直抽（更快更准）
+        if suffix in (".pdf",):
+            text = ""
+            try:
+                text = extract_text(save_path.read_bytes())  # 先试文本层（pypdf）
+            except OcrNoTextLayerError:
+                text = ""  # 无文本层：交给后端 OCR
+            if text and text.strip():
+                engine = OCR_ENGINE_PDF_LAYER
+            else:
+                from app._ocr import ocr_bytes
+
+                text = ocr_bytes(save_path.read_bytes(), suffix)
+                engine = OCR_ENGINE_SERVER
+        else:
+            from app._ocr import ocr_bytes
+
+            text = ocr_bytes(save_path.read_bytes(), suffix)
+            engine = OCR_ENGINE_SERVER
+        if not text or not text.strip():
+            raise OcrNoTextLayerError("OCR 识别结果为空，请确认文件清晰或人工录入")
+        result = parse_work_order_fields(text)
+        result["rawText"] = text           # 回传原文供前端展示（方案 A 两条路径一致）
+        result["engine"] = engine
+        orm.status = "DONE"
+        log.info("OCR 任务 %s 解析完成 engine=%s docConfidence=%s needReview=%s",
+                 task_id, engine, result.get("docConfidence"), result.get("needReview"))
+    except OcrNoTextLayerError as exc:
+        result = {
+            "error": str(exc),
+            "fields": [],
+            "docConfidence": 0.0,
+            "needReview": True,
+            "forceManual": True,
+            "rawTextLen": 0,
+            "engine": OCR_ENGINE_SERVER,
+        }
+        orm.status = "FAILED"
+        log.warning("OCR 任务 %s 无文本层/空结果: %s", task_id, exc)
+    except Exception as exc:  # noqa: BLE001 - 任何解析异常降级为 FAILED，不抛出
+        result = {
+            "error": f"PDF 解析失败: {exc}",
+            "fields": [],
+            "docConfidence": 0.0,
+            "needReview": True,
+            "forceManual": True,
+            "rawTextLen": 0,
+        }
+        orm.status = "FAILED"
+        log.error("OCR 任务 %s 解析异常: %s\n%s", task_id, exc, traceback.format_exc())
+
+    try:
+        orm.result = result
+        db.commit()
+        if save_path and save_path.exists():
+            save_path.unlink(missing_ok=True)  # 解析后清理临时文件，防磁盘堆积
+    except Exception as exc:  # noqa: BLE001 - 回写失败不影响已得结果
+        log.error("OCR 结果回写失败 %s: %s\n%s", task_id, exc, traceback.format_exc())
+    return {"taskId": task_id, "status": orm.status, "result": result}
 
 
 def pending_tasks(db, operator_id: Optional[str] = None, state: Optional[int] = None) -> List[dict]:

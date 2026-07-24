@@ -74,3 +74,82 @@ button:hover {
   color: #237804;
   margin-top: 8px;
 }
+
+/* ===== OCR 智能识别面板（M1-01/M1-03/M1-06/M1-07）===== */
+.ocr-panel {
+  margin-top: 12px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  padding: 12px;
+  background: #fafafa;
+}
+
+.ocr-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+
+.ocr-table th,
+.ocr-table td {
+  border: 1px solid #e8e8e8;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.ocr-table input {
+  margin: 0;
+}
+
+.err {
+  color: #c62828;
+  margin-top: 8px;
+}
+
+.badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  color: #fff;
+}
+
+.badge.green { background: #2e7d32; }
+.badge.orange { background: #ef6c00; }
+.badge.red { background: #c62828; }
+
+/* 纯扫描件 / 无文本层降级横幅（M1-09/M1-10 人工录入提示） */
+.ocr-banner {
+  background: #fff7e6;
+  border: 1px solid #ffd591;
+  color: #ad6800;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* OCR 原文折叠展示（截图/PDF 文本层均可看原文，M1-01 两者都要） */
+.ocr-raw {
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.ocr-raw summary {
+  cursor: pointer;
+  color: #1565c0;
+  user-select: none;
+}
+.ocr-raw pre {
+  background: #f5f5f5;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 10px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+  line-height: 1.5;
+}

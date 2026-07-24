@@ -297,6 +297,25 @@
       "automated": true, "test_step": "test_smoke_db.py#step27",
       "real_concurrency": false,
       "note": "冲突源于状态转移守卫（STATE_ILLEGAL）而非版本锁，串行重放已充分覆盖，无需真并发"
+    },
+    {
+      "id": "TC-36", "module": "files", "category": "functional", "priority": "P0",
+      "title": "OCR 中文间插空格归一化（M1-03 鲁棒性，修复整单置信度 0.09）", "related_br": ["M1-03"],
+      "precondition": "Tesseract 原生 OCR 已就绪（方案 A）",
+      "input": "带网格线/表单截图的 OCR 原文，中文标签被插空格（如 '工 单 号'/'客 户 :'）",
+      "expected": "parse_work_order_fields 归一化后字段正确：客户=示例科技有限公司、工单号=WO-2026-00999、预计产量=500，docConfidence≥0.7（修复前仅 0.09）",
+      "actual": "tests/test_field_parser.py 4 例全 PASS；合成表单 docConfidence 0.09→0.81，客户正确提取", "result": "PASS",
+      "automated": true, "test_step": "tests/test_field_parser.py"
+    },
+    {
+      "id": "TC-37", "module": "files", "category": "functional", "priority": "P0",
+      "title": "OCR 小字号标签误识时按值模式兜底抽取（M1-03 鲁棒性，修复整单置信度 0.0）", "related_br": ["M1-03"],
+      "precondition": "Tesseract 原生 OCR 已就绪（方案 A）；工单流程卡类截图（小字号标签易被误识为近形错字）",
+      "input": "标签被误识但值可读的 OCR 文本（如 '产取编吉: JQ011-A-20CRMNTH008'/'恭户材代:, YAB0895'/'wO0-1991060003-1-7' 及大量乱码日期）",
+      "expected": "字段解析第二遍值模式兜底：工单号=1991060003-1-7、产品编码=JQ011-A-20CRMNTH008、客户=YAB0895（均 valueInferred=True）；客户不抢 JQ011、客户料号不吞工单号前缀；整单置信度=0.15，needReview=True",
+      "actual": "tests/test_field_parser.py#test_parse_value_pattern_fallback_on_garbled_labels PASS；真实 worksheet.png 原 docConfidence=0.0，现恢复 3 个关键字段（推断值）", "result": "PASS",
+      "automated": true, "test_step": "tests/test_field_parser.py",
+      "note": "值模式兜底仅在标签完全未匹配(conf=0.0)时启用；置信度(0.5)低于标签命中(0.9)，前端应以'推断值'标注并保留人工复核"
     }
   ]
 }

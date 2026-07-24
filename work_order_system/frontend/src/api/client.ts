@@ -18,9 +18,12 @@ async function request<T = any>(
 ): Promise<T> {
   const { idempotencyKey, headers, ...rest } = options
   const hdrs: Record<string, string> = {
-    'Content-Type': 'application/json',
     'X-Tenant-Id': TENANT_ID,
     ...(headers as Record<string, string>),
+  }
+  // FormData（文件上传）不设 Content-Type，交由浏览器自动带 multipart boundary
+  if (!(rest.body instanceof FormData)) {
+    hdrs['Content-Type'] = 'application/json'
   }
   if (idempotencyKey) hdrs['Idempotency-Key'] = idempotencyKey
 
@@ -49,6 +52,40 @@ export const api = {
       body: JSON.stringify(payload),
       idempotencyKey: idem,
     }),
+  // OCR 文件上传（异步入队，§25.2.1 BR-17）：multipart + Idempotency-Key（MD5）
+  uploadOcrFile: (file: File, idem: string) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return request<{ taskId: string; status: string; pollUrl: string }>(
+      `/files/upload`,
+      { method: 'POST', body: fd, idempotencyKey: idem },
+    )
+  },
+  // 轮询 OCR 任务终态（真实解析结果，PDF 文本层路径）
+  getOcrTask: (taskId: string) =>
+    request<{
+      taskId: string
+      status: string
+      result: OcrResult
+    }>(`/ocr/tasks/${taskId}`),
+  // 浏览器端 OCR（tesseract.js）识别出的原文 → 后端字段解析（图片路径）
+  parseOcrText: (text: string) =>
+    request<OcrResult>(`/ocr/parse-text`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+}
+
+// OCR 解析结果（PDF 文本层与图片 OCR 两条路径共用）
+export interface OcrResult {
+  fields: { key: string; label: string; value: string; confidence: number }[]
+  docConfidence: number
+  needReview: boolean
+  forceManual: boolean
+  error?: string
+  rawTextLen?: number
+  rawText?: string
+  engine?: string
 }
 
 // ApiError 已由上方 `export interface ApiError` 导出，无需重复 export type

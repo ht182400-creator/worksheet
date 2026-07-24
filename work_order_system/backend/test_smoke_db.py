@@ -83,12 +83,25 @@ _assert(r.status_code == 403 and r.json()["code"] == "BIZ_PERMISSION_DENY", f"co
 r = client.post(f"/api/v1/conflicts/{oid}/resolve", json={"resolve_by": "keep_local", "operator_role": "SUPERVISOR"})
 _assert(r.status_code == 200 and r.json()["data"]["status"] == "RESOLVED", f"conflict supervisor 200 (got {r.status_code})")
 
-# 11. OCR 上传 + 轮询
-r = client.post("/api/v1/files/upload", files={"file": ("t.pdf", b"x", "application/pdf")})
+# 11. OCR 上传 + 轮询（真实解析：样例工单 PDF → 字段抽取）
+from tests.sample_pdf import build_sample_wo_pdf
+pdf_bytes = build_sample_wo_pdf()
+r = client.post("/api/v1/files/upload", files={"file": ("wo.pdf", pdf_bytes, "application/pdf")})
 _assert(r.status_code == 200 and r.json()["data"]["status"] == "QUEUED", "ocr upload 200")
 tid = r.json()["data"]["taskId"]
 r = client.get(f"/api/v1/ocr/tasks/{tid}")
-_assert(r.status_code == 200 and r.json()["data"]["status"] == "DONE", "ocr poll DONE")
+body = r.json()["data"]
+_assert(r.status_code == 200 and body["status"] == "DONE", "ocr poll DONE")
+fmap = {f["key"]: f for f in body["result"]["fields"]}
+_assert(fmap.get("display_no", {}).get("value") == "WO-2026-00123", "ocr 解析出工单号")
+_assert(fmap.get("plan_qty", {}).get("value", "").replace(",", "") == "1200", "ocr 解析出预计产量")
+_assert(body["result"]["docConfidence"] >= 0.7, "ocr 整单置信度达标")
+
+# 11b. 非法/无文本层 PDF → FAILED 降级（M1-09 / M1-10）
+r = client.post("/api/v1/files/upload", files={"file": ("bad.pdf", b"not-a-pdf", "application/pdf")})
+tid_bad = r.json()["data"]["taskId"]
+r = client.get(f"/api/v1/ocr/tasks/{tid_bad}")
+_assert(r.status_code == 200 and r.json()["data"]["status"] == "FAILED", "ocr 非法PDF FAILED 降级")
 
 # 12. 大屏 SSE（max_events=1 保证流必然结束，with 退出可正常关闭，不挂死）
 with client.stream("GET", "/api/v1/bigscreen/metrics?lineId=l1&max_events=1") as resp:
@@ -177,6 +190,21 @@ r = client.patch(f"/api/v1/work-orders/{_oid_race}/status", json={"target_state"
 _assert(r.status_code == 200, f"race first 200 (got {r.status_code})")
 r = client.patch(f"/api/v1/work-orders/{_oid_race}/status", json={"target_state": 1, "version": 1})
 _assert(r.status_code == 409, f"race second 409 (got {r.status_code})")
+
+# 28. 图片 OCR 原文 → 字段解析（TC-34）：微信截图式单行文本，验证跨字段不误吞（M1-03 鲁棒性）
+_img_text = "工单号：WO-2026-00999 客户：示例科技有限公司 预计产量：500 交货日期：2026-08-01"
+r = client.post("/api/v1/ocr/parse-text", json={"text": _img_text})
+_d = r.json()["data"]
+_assert(r.status_code == 200 and r.json()["code"] == "0", f"parse-text 200 (got {r.status_code})")
+_fm = {f["key"]: f for f in _d["fields"]}
+_assert(_fm.get("display_no", {}).get("value") == "WO-2026-00999", "parse-text 解析出工单号(不含后续字段)")
+_assert(_fm.get("customer", {}).get("value") == "示例科技有限公司", "parse-text 客户名不跨字段误吞")
+_assert(_fm.get("plan_qty", {}).get("value") == "500", "parse-text 解析出预计产量")
+_assert(_d.get("engine") == "external-text", "parse-text 标记外部文本引擎(方案 A)")
+
+# 29. 空文本 → 400 OCR_TEXT_EMPTY（TC-35）
+r = client.post("/api/v1/ocr/parse-text", json={"text": "   "})
+_assert(r.status_code == 400 and r.json()["code"] == "OCR_TEXT_EMPTY", f"parse-text 空文本 400 (got {r.status_code}/{r.json().get('code')})")
 
 _t("ALL_DB_SMOKE_PASS")
 # 清理临时库：先释放连接池（Windows 文件锁），失败仅告警不阻碍结果

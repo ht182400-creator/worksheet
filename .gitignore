@@ -24,9 +24,23 @@ env/
 
 # ===== 日志 =====
 *.log
+*.err
+*.out
 
 # ===== AI 工具内部数据（非项目代码） =====
 .codebuddy/
+
+# ===== OCR 调试/诊断脚本与产物（排查用，非源码） =====
+_diag*.py
+_dbg*.py
+_test_form*.py
+*_out.txt
+test_ocr_req.json
+/package.json
+/package-lock.json
+
+# ===== OCR 运行时上传目录（运行时生成，不入库） =====
+work_order_system/backend/data/uploads/
 
 # ===== 系统文件 =====
 .DS_Store
