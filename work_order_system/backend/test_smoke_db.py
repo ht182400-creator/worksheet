@@ -206,6 +206,14 @@ _assert(_d.get("engine") == "external-text", "parse-text 标记外部文本引�
 r = client.post("/api/v1/ocr/parse-text", json={"text": "   "})
 _assert(r.status_code == 400 and r.json()["code"] == "OCR_TEXT_EMPTY", f"parse-text 空文本 400 (got {r.status_code}/{r.json().get('code')})")
 
+# 30. 重复工单号拦截（TC-38）：同一 display_no 第二次创建 → 409 BIZ_WORK_ORDER_DUPLICATE
+_dup_no = "WO-DUP-001"
+_r_first = client.post("/api/v1/work-orders", json={"display_no": _dup_no, "tenant_id": "t1"})
+_assert(_r_first.status_code == 200, f"dup first 200 (got {_r_first.status_code})")
+_r_dup = client.post("/api/v1/work-orders", json={"display_no": _dup_no, "tenant_id": "t1"})
+_assert(_r_dup.status_code == 409 and _r_dup.json()["code"] == "BIZ_WORK_ORDER_DUPLICATE",
+        f"dup 409 (got {_r_dup.status_code}/{_r_dup.json().get('code')})")
+
 _t("ALL_DB_SMOKE_PASS")
 # 清理临时库：先释放连接池（Windows 文件锁），失败仅告警不阻碍结果
 try:

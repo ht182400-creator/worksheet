@@ -22,6 +22,7 @@ from app.config import (
     OCR_UPLOAD_DIR,
     OCR_ENGINE_PDF_LAYER,
     OCR_ENGINE_SERVER,
+    WORK_ORDER_DUPLICATE_CODE,
 )
 from app._field_parser import parse_work_order_fields
 from app._pdf_extract import OcrNoTextLayerError, extract_text
@@ -62,7 +63,22 @@ def _to_work_order(orm: WorkOrderORM) -> WorkOrder:
 
 
 def create_work_order(db, payload) -> WorkOrder:
-    """创建工单（UUID 近似 v7；生产按 §26 用 UUID v7，PK=order_uuid）。"""
+    """创建工单（UUID 近似 v7；生产按 §26 用 UUID v7，PK=order_uuid）。
+
+    去重：相同 ``display_no`` 视为同一张工单，已存在则抛 409 拒绝重复入库，
+    避免 OCR 回填时同一工单被多次建单（脏数据）。
+    """
+    # 重复工单号拦截（按 display_no 判重，禁止重复入库回填）
+    existing = db.scalars(
+        select(WorkOrderORM).where(WorkOrderORM.display_no == payload.display_no)
+    ).first()
+    if existing is not None:
+        log.warning("拒绝重复工单号 %s（已存在 order_uuid=%s）", payload.display_no, existing.order_uuid)
+        raise BusinessError(
+            WORK_ORDER_DUPLICATE_CODE,
+            f"工单号已存在，请勿重复入库（已有 order_uuid={existing.order_uuid}）",
+            409,
+        )
     now = datetime.utcnow()
     orm = WorkOrderORM(
         order_uuid=str(uuid.uuid4()),

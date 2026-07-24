@@ -184,7 +184,13 @@ export default function App() {
       if (pollRef.current) window.clearTimeout(pollRef.current)
       setMsg(`OCR 识别结果已入库：${wo.order_uuid}（置信度 ${ocrResult.docConfidence}）`)
     } catch (e) {
-      setMsg((e as ApiError).message)
+      const err = e as ApiError
+      // 后端对已存在工单号返回 409 BIZ_WORK_ORDER_DUPLICATE，消息内含已有 order_uuid
+      if (err.message.includes('已存在') || err.message.includes('order_uuid')) {
+        setMsg(`该工单号已存在，未重复入库。${err.message}`)
+      } else {
+        setMsg(`确认入库失败：${err.message}`)
+      }
     }
   }
 

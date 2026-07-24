@@ -15,6 +15,7 @@ from sqlalchemy import (
     JSON,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -47,6 +48,9 @@ class WorkOrderORM(Base):
     need_review = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False, default=_now)
     updated_at = Column(DateTime, nullable=False, default=_now)
+
+    # 业务唯一性：同一工单号（display_no）全局唯一，禁止重复入库（代码层已拦截，此约束为 DB 级兜底）
+    __table_args__ = (UniqueConstraint("display_no", name="uq_work_orders_display_no"),)
 
 
 class OrderProcessORM(Base):

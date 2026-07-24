@@ -35,6 +35,10 @@ def create_work_order_endpoint(payload: WorkOrderCreate, db: Session = Depends(g
         wo = create_work_order(db, payload)
         log.info("创建工单 %s tenant=%s", wo.order_uuid, wo.tenant_id)
         return {"code": "0", "data": wo.model_dump(), "traceId": _new_trace()}
+    except BusinessError as exc:
+        # 业务校验失败（如重复工单号）按原状态码返回，不降级为 500
+        log.warning("创建工单业务拦截 %s: %s", exc.code, exc.message)
+        return _fail(exc.code, exc.message, exc.http_status)
     except Exception as exc:  # noqa: BLE001
         log.error("创建工单异常: %s", exc)
         return _fail("BIZ_CREATE_FAILED", "创建工单失败", 500)

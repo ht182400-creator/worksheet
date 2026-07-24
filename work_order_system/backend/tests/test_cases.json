@@ -316,6 +316,16 @@
       "actual": "tests/test_field_parser.py#test_parse_value_pattern_fallback_on_garbled_labels PASS；真实 worksheet.png 原 docConfidence=0.0，现恢复 3 个关键字段（推断值）", "result": "PASS",
       "automated": true, "test_step": "tests/test_field_parser.py",
       "note": "值模式兜底仅在标签完全未匹配(conf=0.0)时启用；置信度(0.5)低于标签命中(0.9)，前端应以'推断值'标注并保留人工复核"
+    },
+    {
+      "id": "TC-38", "module": "work_orders", "category": "exception", "priority": "P0",
+      "title": "重复工单号拦截（禁止 OCR 回填重复入库，按 display_no 判重）", "related_br": ["防重复入库"],
+      "precondition": "create_work_order 已实现 display_no 唯一判重（代码层 409 + DB 唯一约束兜底）",
+      "input": "同一 display_no（如 WO-DUP-001）连续调用 POST /work-orders 两次",
+      "expected": "首次 200 创建成功；第二次 409 BIZ_WORK_ORDER_DUPLICATE，消息含已有 order_uuid，不新建工单",
+      "actual": "test_smoke_db.py#step30 第二次创建返回 409 code=BIZ_WORK_ORDER_DUPLICATE", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step30",
+      "note": "代码层判重 + DB 唯一约束双重防护；前端 confirmAndBackfill 捕获 409 提示'该工单号已存在，未重复入库'"
     }
   ]
 }

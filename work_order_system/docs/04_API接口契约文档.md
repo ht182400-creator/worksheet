@@ -38,7 +38,7 @@
 ### 1. POST /work-orders
 请求：`WorkOrderCreate{display_no, tenant_id, doc_confidence?, need_review?}`
 响应：`200 {"code":"0","data":WorkOrder,"traceId":...}`
-错误：`500 BIZ_CREATE_FAILED`
+错误：`500 BIZ_CREATE_FAILED` / `409 BIZ_WORK_ORDER_DUPLICATE`（display_no 已存在，禁止重复入库回填）
 
 ### 3. GET /work-orders/{id}/state-machine
 响应：`200 {current_state, allowed_transitions:[int], visible_buttons:[str], version}`
