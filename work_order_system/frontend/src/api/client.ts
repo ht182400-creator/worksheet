@@ -61,11 +61,14 @@ export const api = {
       { method: 'POST', body: fd, idempotencyKey: idem },
     )
   },
-  // 轮询 OCR 任务终态（真实解析结果，PDF 文本层路径）
+  // 轮询 OCR 任务（实时进度 + 真实解析结果，PDF 文本层 / 后端原生 OCR 两条路径共用）
   getOcrTask: (taskId: string) =>
     request<{
       taskId: string
       status: string
+      stage?: string      // 当前阶段（QUEUED/TEXT_LAYER/RENDER_OCR/PARSE_FIELDS/DONE/FAILED）
+      progress?: number   // 进度百分比 0-100（前端进度条）
+      message?: string    // 实时阶段说明（如"正在识别第 2/5 页"）
       result: OcrResult
     }>(`/ocr/tasks/${taskId}`),
   // 浏览器端 OCR（tesseract.js）识别出的原文 → 后端字段解析（图片路径）

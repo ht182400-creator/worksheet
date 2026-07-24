@@ -82,13 +82,16 @@
 
 ### 10. POST /files/upload
 请求：multipart `file` + `template_id?`
-响应：`202 {taskId, status:"QUEUED", pollUrl:"/api/v1/ocr/tasks/{taskId}"}`
-- 实现：读取文件字节落盘 `data/uploads/{taskId}{ext}`，入队 QUEUED（**真实解析在轮询时执行**，非演示桩）。
+响应：`202 {taskId, status:"QUEUED", stage:"QUEUED", progress:0, pollUrl:"/api/v1/ocr/tasks/{taskId}"}`
+- 实现：读取文件字节落盘 `data/uploads/{taskId}{ext}`，入队 QUEUED，并**立即启动后台线程异步解析**（非演示桩）。真实 OCR 解析在后台线程执行，**不再阻塞上传/轮询请求**；前端轮询 `GET /ocr/tasks/{id}` 可拿到实时 `stage`/`progress`，展示真实进度条（M1-01 体验优化）。
 错误：`400 OCR_EMPTY_FILE` / `500 OCR_SAVE_FAILED`
 
 ### 11. GET /ocr/tasks/{task_id}
-响应：`200 {taskId, status, result}`
-- `status`：`QUEUED`（解析中）/ `DONE`（识别成功）/ `FAILED`（无文本层或解析失败，M1-09 降级）
+响应：`200 {taskId, status, stage, progress, message, result}`
+- `status`：`QUEUED`（已入队）/ `RUNNING`（后台解析中）/ `DONE`（识别成功）/ `FAILED`（无文本层或解析失败，M1-09 降级）
+- `stage`（当前阶段，进度条中文文案映射）：`QUEUED` → `TEXT_LAYER`（提取 PDF 文本层）→ `RENDER_OCR`（渲染+逐页识别，多页逐页推进）→ `PARSE_FIELDS`（字段解析）→ `DONE`/`FAILED`
+- `progress`：进度百分比 0–100（前端 `<progress>` 数据源，真实反映解析进度，非假动画）
+- `message`：实时阶段说明（如"正在识别第 2/5 页"）
 - `result`（DONE）：
   ```json
   {
@@ -103,7 +106,7 @@
   - `valueInferred`（M1-03 鲁棒性）：`true` 表示该字段值并非由 OCR 标签匹配得到，而是标签被误识时由"值模式兜底"（工单号/产品编码/客户代码/日期等可读值）推断所得，置信度（0.5）低于标签命中（0.9），前端应明确标注"推断值"并保留人工复核。
   - 置信度分级（M1-11）：`docConfidence ≥ 0.95` 自动通过（needReview=false）；`0.70–0.95` 需审核；`< 0.70` 强制人工重录（forceManual=true）。
   - 解析链路：pypdf 提取文本层 / 后端 Tesseract OCR → `_field_parser` 规则化抽取（标签:值 + OCR 纠错库归一化 + 小字号标签误识时的值模式兜底）。
-- `result`（FAILED）：`{error:"明确错误提示", fields:[], docConfidence:0.0, needReview:true, forceManual:true}`
+- `result`（FAILED）：`{code:"NO_TEXT_LAYER"|"INTERNAL_ERROR", error:"明确错误提示", fields:[], rawText:"", docConfidence:0.0, needReview:true, forceManual:true, rawTextLen:0}`
 错误：`404 OCR_TASK_NOT_FOUND`
 
 ### 15. POST /ocr/parse-text（外部原文 → 字段解析，可选 / M1-01）

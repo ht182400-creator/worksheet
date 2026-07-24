@@ -326,6 +326,16 @@
       "actual": "test_smoke_db.py#step30 第二次创建返回 409 code=BIZ_WORK_ORDER_DUPLICATE", "result": "PASS",
       "automated": true, "test_step": "test_smoke_db.py#step30",
       "note": "代码层判重 + DB 唯一约束双重防护；前端 confirmAndBackfill 捕获 409 提示'该工单号已存在，未重复入库'"
+    },
+    {
+      "id": "TC-39", "module": "files", "category": "functional", "priority": "P0",
+      "title": "OCR 异步解析 + 真实进度条（stage/progress 分阶段上报，M1-01 体验优化）", "related_br": ["OCR进度可见"],
+      "precondition": "create_ocr_task 启动后台线程异步解析；_run_ocr_task 分阶段回写 stage/progress（QUEUED→TEXT_LAYER→RENDER_OCR→PARSE_FIELDS→DONE/FAILED）",
+      "input": "上传工单文件（PDF 文本层 / 图片）后轮询 GET /ocr/tasks/{id}",
+      "expected": "轮询响应含 stage/progress(int) 字段；进度随阶段推进（终态 progress=100），阶段数≥2；前端据此展示真实进度条",
+      "actual": "test_smoke_db.py#step31 上传图片后轮询，seen_stages≥2、progress 终态=100，PASS", "result": "PASS",
+      "automated": true, "test_step": "test_smoke_db.py#step31",
+      "note": "解析改为后台线程异步执行（不再阻塞上传/轮询请求）；progress 为真实百分比（非假动画）；旧库 ocr_tasks 经 init_db 迁移自动补列"
     }
   ]
 }

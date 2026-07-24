@@ -32,6 +32,9 @@ from app.config import (
     OCR_SHARPEN,
     OCR_UPSCALE,
     OCR_UPSCALE_MIN_WIDTH,
+    OCR_STAGE_RENDER_OCR,
+    OCR_PCT_RENDER_OCR_MIN,
+    OCR_PCT_RENDER_OCR_MAX,
     TESSERACT_CMD_CANDIDATES,
 )
 from app.logger import get_logger
@@ -279,17 +282,21 @@ def _ocr_pil(img, lang: str = OCR_LANG, psm: int = OCR_PSM) -> str:
         raise RuntimeError(msg) from exc
 
 
-def ocr_image_bytes(data: bytes) -> str:
+def ocr_image_bytes(data: bytes, on_progress=None) -> str:
     """对图片字节（微信截图/扫描件）做 OCR，返回识别文本。
 
-    包含预处理，识别率优于浏览器端直接识别。
+    包含预处理，识别率优于浏览器端直接识别。on_progress 用于上报进度。
     """
     from PIL import Image
 
     try:
+        if on_progress:
+            on_progress(OCR_STAGE_RENDER_OCR, OCR_PCT_RENDER_OCR_MIN, "正在识别图片…")
         img = Image.open(io.BytesIO(data))
         img = _preprocess(img)
         text = _ocr_pil_multi(img)
+        if on_progress:
+            on_progress(OCR_STAGE_RENDER_OCR, OCR_PCT_RENDER_OCR_MAX, "图片识别完成")
         log.info("图片 OCR 完成 len=%d", len(text))
         return text
     except Exception as exc:  # noqa: BLE001 - OCR 失败需抛出让上层降级
@@ -297,25 +304,38 @@ def ocr_image_bytes(data: bytes) -> str:
         raise
 
 
-def ocr_pdf_bytes(data: bytes) -> str:
+def ocr_pdf_bytes(data: bytes, on_progress=None) -> str:
     """PDF 逐页渲染为图片（PyMuPDF，无需外部 poppler）后 OCR，返回拼接文本。
 
     用于纯扫描件（无文本层）场景，解决 M1-09 无文本层无法解析的问题。
+    on_progress 在每页渲染+OCR 后回调，上报逐页进度（真实进度条数据源）。
     """
     import fitz  # PyMuPDF
     from PIL import Image
 
     try:
         doc = fitz.open(stream=data, filetype="pdf")
+        total = min(len(doc), OCR_MAX_PAGES)
         pages: List[str] = []
         for i, page in enumerate(doc):
             if i >= OCR_MAX_PAGES:
                 log.warning("PDF 超出最大页数 %d，剩余页跳过", OCR_MAX_PAGES)
                 break
+            if on_progress:
+                # 渲染+OCR 阶段进度随页数线性推进（MIN→MAX 区间）
+                _pct = int(OCR_PCT_RENDER_OCR_MIN
+                           + (i / total) * (OCR_PCT_RENDER_OCR_MAX - OCR_PCT_RENDER_OCR_MIN)) \
+                    if total > 0 else OCR_PCT_RENDER_OCR_MIN
+                on_progress(OCR_STAGE_RENDER_OCR, _pct, f"正在渲染并识别第 {i + 1}/{total} 页")
             pix = page.get_pixmap(dpi=OCR_DPI)
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             img = _preprocess(img)
             pages.append(_ocr_pil_multi(img))
+            if on_progress:
+                _pct = int(OCR_PCT_RENDER_OCR_MIN
+                           + ((i + 1) / total) * (OCR_PCT_RENDER_OCR_MAX - OCR_PCT_RENDER_OCR_MIN)) \
+                    if total > 0 else OCR_PCT_RENDER_OCR_MAX
+                on_progress(OCR_STAGE_RENDER_OCR, _pct, f"已识别第 {i + 1}/{total} 页")
         doc.close()
         text = "\n".join(p for p in pages if p)
         log.info("PDF OCR 完成 pages=%d len=%d", len(pages), len(text))
@@ -325,16 +345,16 @@ def ocr_pdf_bytes(data: bytes) -> str:
         raise
 
 
-def ocr_bytes(data: bytes, suffix: str) -> str:
+def ocr_bytes(data: bytes, suffix: str, on_progress=None) -> str:
     """按文件类型分流 OCR：图片直接识别，PDF 渲染后识别。返回识别文本。"""
     s = (suffix or "").lower()
     if s in PDF_SUFFIXES:
-        return ocr_pdf_bytes(data)
+        return ocr_pdf_bytes(data, on_progress=on_progress)
     if s in IMAGE_SUFFIXES:
-        return ocr_image_bytes(data)
+        return ocr_image_bytes(data, on_progress=on_progress)
     # 未知类型兜底按图片尝试
     log.warning("未知扩展名 %s，按图片 OCR 兜底", suffix)
-    return ocr_image_bytes(data)
+    return ocr_image_bytes(data, on_progress=on_progress)
 
 
 def engine_name() -> str:

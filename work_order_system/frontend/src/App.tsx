@@ -46,6 +46,19 @@ function confStyle(conf: number): React.CSSProperties {
   return { borderColor: '#c62828', background: '#ffebee' }
 }
 
+/** OCR 阶段中文标签（进度条展示，M1-01 体验优化）。 */
+function ocrStageLabel(stage?: string): string {
+  switch (stage) {
+    case 'QUEUED': return '已入队，准备解析…'
+    case 'TEXT_LAYER': return '正在提取 PDF 文本层…'
+    case 'RENDER_OCR': return '正在渲染并逐页识别…'
+    case 'PARSE_FIELDS': return '正在解析工单字段…'
+    case 'DONE': return '解析完成'
+    case 'FAILED': return '解析失败'
+    default: return '解析中…'
+  }
+}
+
 export default function App() {
   const [orderId, setOrderId] = useState('')
   const [displayNo, setDisplayNo] = useState('WO-2026-001')
@@ -59,6 +72,8 @@ export default function App() {
   const [ocrLoading, setOcrLoading] = useState(false)
   const [ocrError, setOcrError] = useState('')
   const [ocrResult, setOcrResult] = useState<OcrResult | null>(null)
+  const [ocrProgress, setOcrProgress] = useState(0)  // 解析进度百分比（真实进度条）
+  const [ocrStage, setOcrStage] = useState('')        // 当前阶段（进度条中文文案映射）
   const [editFields, setEditFields] = useState<Record<string, string>>({})
   const pollRef = useRef<number | null>(null)
 
@@ -131,15 +146,17 @@ export default function App() {
     const idem = crypto.randomUUID() // 演示幂等键；生产应为 MD5(文件内容)
     try {
       const up = await api.uploadOcrFile(ocrFile, idem)
-      // 后端原生 OCR 较慢（图片/扫描件逐页识别），放宽超时：最多 50 次、间隔 600ms
+      // 后端异步后台解析（真实进度回写），前端轮询展示进度条；最多 120 次、间隔 600ms（约 72s）
       const poll = async (attempt: number) => {
-        if (attempt > 50) {
+        if (attempt > 120) {
           setOcrError('识别超时，请稍后重试')
           setOcrLoading(false)
           return
         }
         const task = await api.getOcrTask(up.taskId)
-        if (task.status === 'QUEUED') {
+        setOcrProgress(task.progress ?? 0)
+        setOcrStage(task.stage ?? '')
+        if (task.status === 'QUEUED' || task.status === 'RUNNING') {
           pollRef.current = window.setTimeout(() => poll(attempt + 1), 600)
           return
         }
@@ -209,6 +226,13 @@ export default function App() {
         <button onClick={uploadAndRecognize} disabled={ocrLoading}>
           {ocrLoading ? '识别中…' : '上传并识别'}
         </button>
+        {ocrLoading && (
+          <div className="ocr-progress">
+            <progress max={100} value={ocrProgress} />
+            <span className="ocr-pct">{ocrProgress}%</span>
+            <div className="ocr-stage">{ocrStageLabel(ocrStage)}</div>
+          </div>
+        )}
         {ocrError && !ocrResult?.forceManual && <p className="err">{ocrError}</p>}
 
         {ocrResult && (ocrResult.fields.length > 0 || ocrResult.forceManual) && (

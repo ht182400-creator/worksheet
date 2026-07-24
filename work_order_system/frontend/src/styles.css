@@ -153,3 +153,27 @@ button:hover {
   font-size: 12px;
   line-height: 1.5;
 }
+
+/* OCR 解析进度条（异步后台解析的真实进度，非假动画，M1-01 体验优化） */
+.ocr-progress {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #bae7ff;
+  background: #e6f7ff;
+  border-radius: 6px;
+}
+.ocr-progress progress {
+  width: 100%;
+  height: 14px;
+  accent-color: #1890ff;
+}
+.ocr-progress .ocr-pct {
+  margin-left: 8px;
+  font-weight: 600;
+  color: #0958d9;
+}
+.ocr-progress .ocr-stage {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #0050b3;
+}

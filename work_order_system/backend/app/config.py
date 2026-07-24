@@ -61,6 +61,19 @@ OCR_DESPECKLE_AREA = 30              # 去除小于该像素面积的噪点连�
 OCR_ENGINE_SERVER = "server-tesseract"    # 后端原生识别（方案 A）
 OCR_ENGINE_PDF_LAYER = "pdf-text-layer"   # PDF 文本层直抽（非 OCR）
 
+# OCR 任务分阶段进度（异步后台解析 + 真实进度条，避免前端长阻塞且不可见）
+OCR_STAGE_QUEUED = "QUEUED"              # 已入队，等待解析线程启动
+OCR_STAGE_TEXT_LAYER = "TEXT_LAYER"      # 正在提取 PDF 文本层（含文本层时此步即出结果）
+OCR_STAGE_RENDER_OCR = "RENDER_OCR"      # 渲染页面 + 逐页 OCR 识别（纯扫描件/图片）
+OCR_STAGE_PARSE_FIELDS = "PARSE_FIELDS"  # 规则化解析工单字段
+OCR_STAGE_DONE = "DONE"                  # 解析完成
+OCR_STAGE_FAILED = "FAILED"              # 解析失败（无文本层/空结果/异常）
+OCR_PCT_TEXT_LAYER = 10                  # 文本层提取阶段进度基线（0-100）
+OCR_PCT_RENDER_OCR_MIN = 30              # 渲染+OCR 阶段起始进度（逐页递增至此区间）
+OCR_PCT_RENDER_OCR_MAX = 85              # 渲染+OCR 阶段结束进度（交接给字段解析）
+OCR_PCT_PARSE_FIELDS = 90                # 字段解析阶段进度
+OCR_PCT_DONE = 100                       # 完成
+
 # 原生 Tesseract 二进制候选路径（不在 PATH 时按顺序探测，首个存在者即用）。
 # 本机实测装在 D:\Program Files (x86)\Tesseract-OCR；其余为常规默认位置。
 # 也可通过环境变量 TESSERACT_CMD 显式指定，优先级最高。

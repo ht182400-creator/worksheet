@@ -1,6 +1,7 @@
 """DB 版端到端冒烟测试（TestClient + 临时 SQLite）。"""
 import os
 import tempfile
+import time
 from datetime import datetime, timedelta, timezone
 
 # 测试库：导入 app 之前注入环境变量，使引擎指向临时库（Windows 路径用正斜杠）
@@ -83,25 +84,44 @@ _assert(r.status_code == 403 and r.json()["code"] == "BIZ_PERMISSION_DENY", f"co
 r = client.post(f"/api/v1/conflicts/{oid}/resolve", json={"resolve_by": "keep_local", "operator_role": "SUPERVISOR"})
 _assert(r.status_code == 200 and r.json()["data"]["status"] == "RESOLVED", f"conflict supervisor 200 (got {r.status_code})")
 
-# 11. OCR 上传 + 轮询（真实解析：样例工单 PDF → 字段抽取）
+# 11. OCR 上传 + 异步轮询（真实解析：样例工单 PDF → 字段抽取；进度条数据源）
 from tests.sample_pdf import build_sample_wo_pdf
 pdf_bytes = build_sample_wo_pdf()
 r = client.post("/api/v1/files/upload", files={"file": ("wo.pdf", pdf_bytes, "application/pdf")})
 _assert(r.status_code == 200 and r.json()["data"]["status"] == "QUEUED", "ocr upload 200")
 tid = r.json()["data"]["taskId"]
-r = client.get(f"/api/v1/ocr/tasks/{tid}")
-body = r.json()["data"]
-_assert(r.status_code == 200 and body["status"] == "DONE", "ocr poll DONE")
-fmap = {f["key"]: f for f in body["result"]["fields"]}
+# 后台线程异步解析：轮询直到终态（验证前端进度条数据可用，非同步阻塞）
+_body = None
+for _k in range(120):
+    r = client.get(f"/api/v1/ocr/tasks/{tid}")
+    _d = r.json()["data"]
+    if _k == 0:
+        _assert("stage" in _d and "progress" in _d and isinstance(_d.get("progress"), int),
+                "ocr poll 含 stage/progress(int) 字段（进度条可用）")
+    if _d["status"] in ("DONE", "FAILED"):
+        _body = _d
+        break
+    time.sleep(0.3)
+_assert(_body is not None, "ocr 任务到达终态(DONE/FAILED)")
+_assert(_body["status"] == "DONE", f"ocr 异步解析 DONE (got {_body['status']})")
+fmap = {f["key"]: f for f in _body["result"]["fields"]}
 _assert(fmap.get("display_no", {}).get("value") == "WO-2026-00123", "ocr 解析出工单号")
 _assert(fmap.get("plan_qty", {}).get("value", "").replace(",", "") == "1200", "ocr 解析出预计产量")
-_assert(body["result"]["docConfidence"] >= 0.7, "ocr 整单置信度达标")
+_assert(_body["result"]["docConfidence"] >= 0.7, "ocr 整单置信度达标")
 
-# 11b. 非法/无文本层 PDF → FAILED 降级（M1-09 / M1-10）
+# 11b. 非法/无文本层 PDF → FAILED 降级（M1-09 / M1-10，异步轮询验证）
 r = client.post("/api/v1/files/upload", files={"file": ("bad.pdf", b"not-a-pdf", "application/pdf")})
 tid_bad = r.json()["data"]["taskId"]
-r = client.get(f"/api/v1/ocr/tasks/{tid_bad}")
-_assert(r.status_code == 200 and r.json()["data"]["status"] == "FAILED", "ocr 非法PDF FAILED 降级")
+_bad = None
+for _k in range(120):
+    r = client.get(f"/api/v1/ocr/tasks/{tid_bad}")
+    _d = r.json()["data"]
+    if _d["status"] in ("DONE", "FAILED"):
+        _bad = _d
+        break
+    time.sleep(0.3)
+_assert(_bad is not None, "ocr 非法PDF 到达终态")
+_assert(_bad["status"] == "FAILED", f"ocr 非法PDF FAILED 降级 (got {_bad['status']})")
 
 # 12. 大屏 SSE（max_events=1 保证流必然结束，with 退出可正常关闭，不挂死）
 with client.stream("GET", "/api/v1/bigscreen/metrics?lineId=l1&max_events=1") as resp:
@@ -213,6 +233,36 @@ _assert(_r_first.status_code == 200, f"dup first 200 (got {_r_first.status_code}
 _r_dup = client.post("/api/v1/work-orders", json={"display_no": _dup_no, "tenant_id": "t1"})
 _assert(_r_dup.status_code == 409 and _r_dup.json()["code"] == "BIZ_WORK_ORDER_DUPLICATE",
         f"dup 409 (got {_r_dup.status_code}/{_r_dup.json().get('code')})")
+
+# 31. OCR 异步进度条（TC-39）：用 PIL 生成图片上传，轮询验证 stage/progress 实时推进
+def _make_png():
+    from PIL import Image
+    import io as _io
+    _buf = _io.BytesIO()
+    Image.new("RGB", (240, 80), "white").save(_buf, "PNG")
+    return _buf.getvalue()
+
+
+_png = _make_png()
+_r39 = client.post("/api/v1/files/upload", files={"file": ("t.png", _png, "image/png")})
+_assert(_r39.status_code == 200, f"tc39 upload 200 (got {_r39.status_code})")
+_tid39 = _r39.json()["data"]["taskId"]
+_seen_stages = set()
+_seen_progress = set()
+_final39 = None
+for _i in range(120):
+    _r = client.get(f"/api/v1/ocr/tasks/{_tid39}")
+    _d = _r.json()["data"]
+    _seen_stages.add(_d.get("stage"))
+    if isinstance(_d.get("progress"), int):
+        _seen_progress.add(_d["progress"])
+    if _d["status"] in ("DONE", "FAILED"):
+        _final39 = _d
+        break
+    time.sleep(0.3)
+_assert(_final39 is not None, "TC-39 OCR 任务到达终态")
+_assert(_final39["progress"] == 100, f"TC-39 终态进度=100 (got {_final39['progress']})")
+_assert(len(_seen_stages) >= 2, f"TC-39 阶段有推进 (seen={sorted(_seen_stages)})")
 
 _t("ALL_DB_SMOKE_PASS")
 # 清理临时库：先释放连接池（Windows 文件锁），失败仅告警不阻碍结果

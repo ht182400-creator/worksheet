@@ -10,7 +10,7 @@ from typing import List
 import pypdf
 from pypdf.errors import PdfReadError
 
-from app.config import OCR_MAX_PAGES
+from app.config import OCR_MAX_PAGES, OCR_STAGE_TEXT_LAYER, OCR_PCT_TEXT_LAYER
 from app.logger import get_logger
 
 log = get_logger(__name__)
@@ -20,12 +20,15 @@ class OcrNoTextLayerError(Exception):
     """PDF 无文本层（纯扫描件），需 OCR 引擎或人工录入（M1-09）。"""
 
 
-def extract_text(file_bytes: bytes) -> str:
+def extract_text(file_bytes: bytes, on_progress=None) -> str:
     """从 PDF 字节提取全文（合并各页）。
 
     无文本层或解析失败时抛 OcrNoTextLayerError / PdfReadError，由上层映射为
     OCR 任务 FAILED 终态并给出明确提示（M1-09）。
+    on_progress(stage, pct, message?) 可选回调，用于上报阶段进度（实时进度条）。
     """
+    if on_progress:
+        on_progress(OCR_STAGE_TEXT_LAYER, OCR_PCT_TEXT_LAYER, "正在提取 PDF 文本层…")
     try:
         reader = pypdf.PdfReader(io.BytesIO(file_bytes))
     except PdfReadError as exc:

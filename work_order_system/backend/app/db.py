@@ -16,13 +16,17 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
     create_engine,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 # 数据库地址：默认本地 SQLite 文件；测试通过环境变量覆盖为内存/临时库
 DB_URL = os.getenv("WORK_ORDER_DB_URL", "sqlite:///./work_order_system.db")
-_CONNECT_ARGS = {"check_same_thread": False} if DB_URL.startswith("sqlite") else {}
+_CONNECT_ARGS = (
+    {"check_same_thread": False, "timeout": 30}
+    if DB_URL.startswith("sqlite") else {}
+)
 
 engine = create_engine(DB_URL, connect_args=_CONNECT_ARGS)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -111,19 +115,54 @@ class QrcodePrintTaskORM(Base):
 
 
 class OcrTaskORM(Base):
-    """OCR 任务（§26.7 状态机 + 死信）。"""
+    """OCR 任务（§26.7 状态机 + 死信）。
+
+    解析改为后台线程异步执行，stage/progress/message 实时反映进度，
+    前端轮询即可展示真实进度条（避免长阻塞且不可见，M1-01 体验优化）。
+    """
 
     __tablename__ = "ocr_tasks"
 
     task_id = Column(String(36), primary_key=True)
-    status = Column(String(16), nullable=False, default="QUEUED")
+    status = Column(String(16), nullable=False, default="QUEUED")  # QUEUED/RUNNING/DONE/FAILED
+    stage = Column(String(24), nullable=False, default="QUEUED")   # 当前阶段（OCR_STAGE_*）
+    progress = Column(Integer, nullable=False, default=0)           # 进度百分比 0-100（前端进度条）
+    message = Column(String(120), nullable=True)                    # 实时阶段说明（如"正在识别第 2/5 页"）
     result = Column(JSON, nullable=True)
     created_at = Column(DateTime, nullable=False, default=_now)
+
+
+def _migrate_ocr_task_columns() -> None:
+    """旧库兼容迁移：为 ocr_tasks 补加 stage/progress/message 列（首次部署新列时执行）。
+
+    生产库若已存在旧 schema 表，``create_all`` 不会自动加列，需 ALTER 补齐，
+    否则后台解析写入新列会报 ``no such column``。
+    """
+    from sqlalchemy import inspect
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("ocr_tasks"):
+            return
+        existing = {c["name"] for c in insp.get_columns("ocr_tasks")}
+        needed = {
+            "stage": "VARCHAR(24) NOT NULL DEFAULT 'QUEUED'",
+            "progress": "INTEGER NOT NULL DEFAULT 0",
+            "message": "VARCHAR(120)",
+        }
+        with engine.begin() as conn:
+            for col, ddl in needed.items():
+                if col not in existing:
+                    log.info("OCR 任务表迁移：新增列 %s", col)
+                    conn.execute(text(f"ALTER TABLE ocr_tasks ADD COLUMN {col} {ddl}"))
+    except Exception as exc:  # noqa: BLE001 - 迁移失败不应阻断启动
+        log.error("OCR 任务表迁移异常: %s\n%s", exc, traceback.format_exc())
 
 
 def init_db() -> None:
     """创建全部表（生产应在迁移工具中执行，此处仅骨架便利）。"""
     Base.metadata.create_all(bind=engine)
+    _migrate_ocr_task_columns()
 
 
 def get_db():
