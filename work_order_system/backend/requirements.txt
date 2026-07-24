@@ -9,3 +9,4 @@ Pillow>=10.0                # 图像预处理（放大/灰度/二值化）
 PyMuPDF>=1.23               # PDF 逐页渲染为图片（方案 A 扫描件 OCR，无需外部 poppler）
 numpy>=1.24                  # 图像数组处理（表格网格线去除，M1-01 表单 OCR 增强）
 opencv-python>=4.7           # 形态学去网格线/去噪点（方案 A 表单识别率提升，M1-01）
+python-dotenv>=1.0             # 本地 .env 加载（优雅降级，CI/容器可不用；详见 docs/07）

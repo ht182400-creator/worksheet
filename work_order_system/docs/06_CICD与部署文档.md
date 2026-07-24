@@ -114,6 +114,9 @@ npm test           # vitest 单元测试（2026-07-23 新增，见 §05 §7）
 | `SERVICE_HOST` | `0.0.0.0` | 监听地址 |
 | `SERVICE_PORT` | `8000` | 监听端口 |
 | `API_V1_PREFIX` | `/api/v1` | 接口前缀 |
+| `WX_APPID` | 空（必须从环境变量注入） | 小程序 AppID（非敏感）；由 backend/.env 或系统环境变量提供，详见 [07](./07_小程序占位符与配置处理手册.md) |
+| `WX_APPSECRET` | 空（必须从环境变量注入） | 小程序密钥（【机密】）；仅 backend/.env / 系统环境变量，绝不入库、不写前端 |
+| `WX_SUBSCRIBE_TEMPLATE_ID` | 空（必须从环境变量注入） | 订阅消息模板 ID（非敏感）；须与小程序端 TEMPLATE_ID、后端 WX_TEMPLATE_FIELDS 一致 |
 
 ### 2.4 数据库迁移（生产）
 

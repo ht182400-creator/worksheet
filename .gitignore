@@ -45,3 +45,6 @@ work_order_system/backend/data/uploads/
 # ===== 系统文件 =====
 .DS_Store
 Thumbs.db
+
+# ===== 环境变量（含密钥，禁止入库；.env.example 为安全模板，可入库） =====
+.env

@@ -2,6 +2,17 @@
 import os
 from pathlib import Path
 
+# 本地开发从 backend/.env 读取密钥等环境变量（生产改用系统环境变量/密钥管理注入）。
+# 缺失 python-dotenv 或 .env 不存在时静默跳过，不影响 CI / 容器环境。
+# 注意：load_dotenv 必须在所有 os.getenv(...) 调用之前执行，确保 .env 值生效。
+try:
+    from dotenv import load_dotenv
+
+    _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+    load_dotenv(dotenv_path=_ENV_FILE)
+except Exception:  # noqa: BLE001 - 依赖/文件缺失不应阻断启动
+    pass
+
 # 服务配置
 SERVICE_HOST = "0.0.0.0"
 SERVICE_PORT = 8000
