@@ -162,11 +162,14 @@ def _decr_worker_quota(openid: str) -> None:
 
 
 def upsert_worker(db: Session, openid: str, name: Optional[str], tenant_id: str,
-                  subscribe_quota: int = 0) -> WorkerORM:
+                  subscribe_quota: int = 0, phone: Optional[str] = None) -> WorkerORM:
     """注册/更新工人（小程序登录后上报 openid + 授权余量，§新增推送）。"""
     existing = db.execute(select(WorkerORM).where(WorkerORM.openid == openid)).scalars().first()
     if existing is not None:
-        existing.name = name if name is not None else existing.name
+        # 仅当传入「非空姓名」才覆盖，避免「无姓名二次注册」把已有姓名清空为空串（§修复）
+        existing.name = name if name else existing.name
+        # 同理：仅非空手机号才覆盖，避免空串清空已有手机号（§新增 getPhoneNumber）
+        existing.phone = phone if phone else existing.phone
         existing.tenant_id = tenant_id
         existing.subscribe_quota = subscribe_quota
         existing.updated_at = datetime.utcnow()
@@ -179,6 +182,7 @@ def upsert_worker(db: Session, openid: str, name: Optional[str], tenant_id: str,
         name=name,
         tenant_id=tenant_id,
         subscribe_quota=subscribe_quota,
+        phone=phone,
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )
@@ -192,6 +196,102 @@ def get_worker_quota(db: Session, openid: str) -> Optional[int]:
     """查询工人剩余订阅授权余量（无记录返回 None）。"""
     w = db.execute(select(WorkerORM).where(WorkerORM.openid == openid)).scalars().first()
     return w.subscribe_quota if w is not None else None
+
+
+def get_worker(db: Session, openid: str) -> Optional[WorkerORM]:
+    """按 openid 取工人完整 ORM（含 phone 等字段，§新增 getPhoneNumber 自阅手机）。"""
+    return db.execute(select(WorkerORM).where(WorkerORM.openid == openid)).scalars().first()
+
+
+def list_workers(db: Session) -> List[dict]:
+    """列出所有工人（操作员后台「浏览所有记录」+ 小程序姓名输入框「下拉选择」数据源）。
+
+    返回 ``[{openid, name, phone, subscribe_quota}]``；``name`` 为空时前端按「未命名」展示。
+    仅演示用途，生产应加鉴权避免泄露工人名单。
+    """
+    rows = db.scalars(select(WorkerORM).order_by(WorkerORM.created_at)).all()
+    return [
+        {
+            "openid": r.openid,
+            "name": r.name or "",
+            "phone": r.phone or "",
+            "subscribe_quota": r.subscribe_quota,
+        }
+        for r in rows
+    ]
+
+
+def search_workers(db: Session, query: str) -> List[dict]:
+    """按手机号或 openid 后 N 位搜索工人（操作员后台工人管理面板「找人」）。
+
+    匹配规则（§工人管理面板）：
+    - ``openid`` 后缀匹配（用户输入微信用户后 6 位等末段）；
+    - ``phone`` 模糊包含（用户输入手机号任意片段，如后 4 位）。
+    空查询返回空列表；结果与 ``list_workers`` 同源，含 openid/name/phone/subscribe_quota。
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+    rows = db.scalars(
+        select(WorkerORM).where(
+            (WorkerORM.openid.like(f"%{q}")) | (WorkerORM.phone.like(f"%{q}%"))
+        )
+    ).all()
+    return [
+        {
+            "openid": r.openid,
+            "name": r.name or "",
+            "phone": r.phone or "",
+            "subscribe_quota": r.subscribe_quota,
+        }
+        for r in rows
+    ]
+
+
+def update_worker(
+    db: Session,
+    openid: str,
+    name: Optional[str] = None,
+    phone: Optional[str] = None,
+    subscribe_quota: Optional[int] = None,
+) -> Optional[WorkerORM]:
+    """更新工人信息（操作员后台工人管理面板，§工人管理面板）。
+
+    仅覆盖显式传入的字段（``None`` 表示不修改），允许显式传空串清空姓名；
+    ``subscribe_quota`` 可由操作员后台调整订阅授权余量；
+    工人不存在返回 ``None``，由路由层转 404。
+    """
+    w = db.scalars(select(WorkerORM).where(WorkerORM.openid == openid)).first()
+    if w is None:
+        return None
+    if name is not None:
+        w.name = name
+    if phone is not None:
+        w.phone = phone
+    if subscribe_quota is not None:
+        w.subscribe_quota = subscribe_quota
+    w.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(w)
+    return w
+
+
+def delete_worker(db: Session, openid: str) -> Optional[WorkerORM]:
+    """按 openid 删除工人记录（操作员后台工人管理面板「删」，§工人管理面板）。
+
+    返回被删除的 ORM（便于回显）；工人不存在返回 ``None``，由路由层转 404。
+    """
+    try:
+        w = db.scalars(select(WorkerORM).where(WorkerORM.openid == openid)).first()
+        if w is None:
+            return None
+        db.delete(w)
+        db.commit()
+        return w
+    except Exception as exc:  # pragma: no cover - 数据库异常
+        db.rollback()
+        log.error("删除工人 %s 异常: %s\n%s", openid, exc, traceback.format_exc())
+        raise
 
 
 def get_work_order(db, order_id: str) -> Optional[WorkOrder]:
@@ -562,22 +662,21 @@ def pending_tasks(db, operator_id: Optional[str] = None, state: Optional[int] = 
     新增 ``assignee_openid`` 过滤（§新增推送）：仅返回指派给该工人的工单下的工序，
     供微信小程序按 openid 拉取"我的待办"（工单主表 work_orders.assignee_openid 关联）。
     """
+    stmt = (
+        select(OrderProcessORM, WorkOrderORM.display_no)
+        .join(WorkOrderORM, OrderProcessORM.order_uuid == WorkOrderORM.order_uuid)
+    )
     if assignee_openid:
-        stmt = (
-            select(OrderProcessORM)
-            .join(WorkOrderORM, OrderProcessORM.order_uuid == WorkOrderORM.order_uuid)
-            .where(WorkOrderORM.assignee_openid == assignee_openid)
-        )
-    else:
-        stmt = select(OrderProcessORM)
-    rows = db.scalars(stmt).all()
+        stmt = stmt.where(WorkOrderORM.assignee_openid == assignee_openid)
+    rows = db.execute(stmt).all()
     tasks = []
-    for r in rows:
+    for proc, display_no in rows:
         tasks.append({
-            "order_uuid": r.order_uuid,
-            "process_code": r.process_code,
-            "required_qty": r.required_qty,
-            "completed_qty": r.completed_qty,
-            "remaining_qty": r.required_qty - r.completed_qty,
+            "order_uuid": proc.order_uuid,
+            "process_code": proc.process_code,
+            "display_no": display_no,
+            "required_qty": proc.required_qty,
+            "completed_qty": proc.completed_qty,
+            "remaining_qty": proc.required_qty - proc.completed_qty,
         })
     return tasks

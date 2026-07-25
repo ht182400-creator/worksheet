@@ -1,8 +1,12 @@
 """Pydantic 数据模型（对应 V5.0 §25/§26）。"""
+import re
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# 国内手机号规则：11 位且以 1 开头（工人管理面板「改」手机号校验，§工人管理面板）
+PHONE_RE = re.compile(r"^1\d{10}$")
 
 
 class WorkOrderCreate(BaseModel):
@@ -29,12 +33,35 @@ class WorkOrder(BaseModel):
 
 
 class WorkerRegister(BaseModel):
-    """工人（小程序用户）注册/更新请求体（§新增推送）。"""
+    """工人（小程序用户）注册/更新请求体（§新增推送 + getPhoneNumber 手机号）。"""
     openid: Optional[str] = None  # 直接提供 openid；或与 code 二选一
     code: Optional[str] = None    # wx.login 临时凭证，由后端换 openid
     name: Optional[str] = None
     tenant_id: str
+    phone_code: Optional[str] = None  # 微信 getPhoneNumber 的 code，后端解密真实手机号（§新增）
+    phone: Optional[str] = None       # 直接提供手机号（操作员补录/测试用；生产优先用 phone_code 解密）
     subscribe_quota: int = 0  # 一次性订阅剩余授权数（小程序侧授权后上报）
+
+
+class WorkerUpdate(BaseModel):
+    """工人信息更新请求体（操作员后台工人管理面板补填姓名，§工人管理面板）。
+
+    ``name``/``phone``/``subscribe_quota`` 为 Optional：传 ``None``（缺省）表示不修改该字段；
+    传显式值（含空串）则覆盖，便于操作员手动清空姓名。
+    """
+    name: Optional[str] = None   # 补填/修正姓名（可显式置空清空）
+    phone: Optional[str] = None  # 可选补填手机号（一般无需，小程序已授权）
+    subscribe_quota: Optional[int] = None  # 可选修正订阅授权余量（操作员后台调整）
+
+    @field_validator("phone")
+    @classmethod
+    def _check_phone(cls, v: Optional[str]) -> Optional[str]:
+        """手机号校验：None 或空串（清空）放行；非空必须 11 位且以 1 开头（§工人管理面板）。"""
+        if v is None or v == "":
+            return v
+        if not PHONE_RE.match(v):
+            raise ValueError("手机号必须是 11 位数字且以 1 开头")
+        return v
 
 
 class StateMachineOut(BaseModel):

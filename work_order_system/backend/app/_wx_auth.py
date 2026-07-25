@@ -75,3 +75,68 @@ def code2session(code: str) -> dict:
         raise WxAuthError(WX_ERR_CODE2SESSION_FAILED, "微信未返回 openid")
     log.info("jscode2session 成功 openid=%s", data.get("openid"))
     return data
+
+
+# 获取 access_token（client_credential），用于手机号解码等需 token 的微信接口（§新增）
+_WX_TOKEN_URL = "https://api.weixin.qq.com/cgi-bin/token"
+_WX_PHONE_URL = "https://api.weixin.qq.com/wxa/business/getuserphonenumber"
+
+_WX_TOKEN_CACHE = {"token": None, "expire_at": 0.0}
+
+WX_ERR_PHONE_FAILED = "BIZ_WX_PHONE_FAILED"
+
+
+def get_access_token() -> str:
+    """获取/复用 access_token（client_credential，2h 有效，临近过期自动刷新）。"""
+    import time
+
+    now = time.time()
+    if _WX_TOKEN_CACHE["token"] and now < _WX_TOKEN_CACHE["expire_at"]:
+        return _WX_TOKEN_CACHE["token"]
+    if not WX_APPID or not WX_APPSECRET:
+        raise WxAuthError(WX_ERR_NOT_CONFIGURED, "微信 AppID/AppSecret 未配置")
+    url = f"{_WX_TOKEN_URL}?grant_type=client_credential&appid={WX_APPID}&secret={WX_APPSECRET}"
+    req = urllib.request.Request(url)
+    req.add_header("User-Agent", "work-order-backend")
+    try:
+        with urllib.request.urlopen(req, timeout=WX_HTTP_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        log.error("获取 access_token 异常: %s", exc)
+        raise WxAuthError(WX_ERR_PHONE_FAILED, "获取 access_token 失败") from exc
+    if data.get("errcode"):
+        raise WxAuthError(WX_ERR_PHONE_FAILED, f"获取 access_token 失败: {data.get('errmsg')}")
+    token = data["access_token"]
+    _WX_TOKEN_CACHE["token"] = token
+    _WX_TOKEN_CACHE["expire_at"] = now + max(0, int(data.get("expires_in", 7200)) - 300)
+    return token
+
+
+def phone_number_info(code: str) -> str:
+    """用 getPhoneNumber 的 code 换取真实手机号（§新增）。
+
+    入参: code = 小程序 ``bindgetphonenumber`` 事件 ``e.detail.code``
+    返回: 纯手机号字符串（phone_info.pure_phone_number）
+    异常: WxAuthError（未配置 / 网络失败 / 微信返回错误码）
+    """
+    if not code:
+        raise WxAuthError(WX_ERR_PHONE_FAILED, "phone code 为空")
+    token = get_access_token()
+    url = f"{_WX_PHONE_URL}?access_token={token}"
+    body = json.dumps({"code": code}).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    req.add_header("User-Agent", "work-order-backend")
+    try:
+        with urllib.request.urlopen(req, timeout=WX_HTTP_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        log.error("解码手机号网络异常: %s", exc)
+        raise WxAuthError(WX_ERR_PHONE_FAILED, "解码手机号网络失败") from exc
+    if data.get("errcode"):
+        raise WxAuthError(WX_ERR_PHONE_FAILED, f"解码手机号失败: {data.get('errmsg')}")
+    phone_info = data.get("phone_info") or {}
+    phone = phone_info.get("purePhoneNumber") or phone_info.get("phoneNumber")
+    if not phone:
+        raise WxAuthError(WX_ERR_PHONE_FAILED, "微信未返回手机号")
+    log.info("解码手机号成功（openid 侧关联）")
+    return phone

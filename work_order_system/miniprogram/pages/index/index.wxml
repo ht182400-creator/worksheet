@@ -3,12 +3,22 @@
     <view class="row"><text class="label">登录状态</text><text class="value">{{statusText}}</text></view>
     <view class="row"><text class="label">openid</text><text class="value small">{{openid || '—'}}</text></view>
     <view class="row"><text class="label">订阅余量</text><text class="value">{{quota}}</text></view>
+    <view class="btn-row">
+      <button wx:if="{{openid}}" class="btn btn-danger" bindtap="onLogout">退出登录</button>
+      <button wx:else class="btn" bindtap="onLogin">登录</button>
+    </view>
   </view>
 
   <view class="card">
     <view class="row"><text class="label">姓名(可选)</text></view>
-    <input class="input" placeholder="如：张三" value="{{name}}" bindinput="onNameInput" />
-    <button class="btn" bindtap="onSubscribeAndRegister">授权订阅并注册</button>
-    <button class="btn btn-ghost" bindtap="goTodo">查看我的待办</button>
+    <view class="name-line">
+      <input class="input" placeholder="如：张三" value="{{name}}" bindinput="onNameInput" />
+      <picker mode="selector" range="{{workerNames}}" bindchange="onPickWorker">
+        <view class="pick-btn">选择</view>
+      </picker>
+    </view>
+    <button class="btn btn-auto" bindtap="onSubscribeAndRegister">授权订阅并注册</button>
+    <button class="btn btn-ghost btn-auto" open-type="getPhoneNumber" bindgetphonenumber="onGetPhone">授权手机号并绑定</button>
+    <button class="btn btn-ghost btn-auto" bindtap="goTodo">查看我的待办</button>
   </view>
 </view>

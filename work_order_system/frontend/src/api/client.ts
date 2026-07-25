@@ -77,6 +77,31 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ text }),
     }),
+  // 工人 / 推送
+  listWorkers: () => request<WorkerResult[]>('/workers'),
+  getWorker: (openid: string) => request<WorkerResult>(`/workers/by-openid/${encodeURIComponent(openid)}`),
+  // 兼容：小程序侧仅关心余量+手机号（现已额外带回 name，无副作用）
+  getWorkerQuota: (openid: string) => request(`/workers/by-openid/${encodeURIComponent(openid)}`),
+  registerWorker: (payload: {
+    openid?: string; code?: string; name?: string; tenant_id: string; subscribe_quota?: number; phone?: string;
+  }) => request('/workers', { method: 'POST', body: JSON.stringify(payload) }),
+  // 操作员后台工人管理面板（§工人管理面板）：按手机号或 openid 后 N 位找人
+  searchWorkers: (q: string) =>
+    request<WorkerResult[]>(`/workers/search?q=${encodeURIComponent(q)}`),
+  // 改：补填/修正工人姓名、手机号、订阅余量（§工人管理面板）
+  updateWorker: (openid: string, payload: { name?: string; phone?: string; subscribe_quota?: number }) =>
+    request<WorkerResult>(`/workers/${encodeURIComponent(openid)}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  // 删：删除工人记录（§工人管理面板）
+  deleteWorker: (openid: string) =>
+    request<{ openid: string; deleted: boolean }>(`/workers/${encodeURIComponent(openid)}`, { method: 'DELETE' }),
+}
+
+// 工人记录（操作员后台工人管理面板：浏览 / 查 / 改 / 删 共用）
+export interface WorkerResult {
+  openid: string
+  name: string
+  phone: string
+  subscribe_quota: number | null
 }
 
 // OCR 解析结果（PDF 文本层与图片 OCR 两条路径共用）

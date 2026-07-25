@@ -1,7 +1,7 @@
 // 待办页：按 openid 拉取"我的待办" + 定时轮询兜底（订阅消息未授权时的补偿通道）。
 const app = getApp();
 const request = require('../../utils/request.js');
-const { TEMPLATE_ID, TENANT_ID } = require('../../utils/config.js');
+const { TEMPLATE_ID, TENANT_ID, BASE_URL, QRCODE_DEEPLINK_SCHEME } = require('../../utils/config.js');
 
 const POLL_INTERVAL_MS = 15000; // 15s 轮询兜底
 
@@ -42,12 +42,25 @@ Page({
     this.setData({ loading: true });
     request.get('/pending-tasks?assignee_openid=' + encodeURIComponent(openid))
       .then((tasks) => {
-        this.setData({ tasks: tasks, loading: false, lastUpdate: this.now() });
+        const base = BASE_URL + '/qrcode/img';
+        const enriched = tasks.map((t) => ({
+          key: t.order_uuid + '|' + t.process_code,
+          qrUrl: base + '?order_uuid=' + encodeURIComponent(t.order_uuid) + '&process_code=' + encodeURIComponent(t.process_code) + '&t=qr',
+          barUrl: base + '?order_uuid=' + encodeURIComponent(t.order_uuid) + '&process_code=' + encodeURIComponent(t.process_code) + '&t=bar',
+          deepLink: QRCODE_DEEPLINK_SCHEME + '?order_uuid=' + t.order_uuid + '&process_code=' + t.process_code,
+          ...t,
+        }));
+        this.setData({ tasks: enriched, loading: false, lastUpdate: this.now() });
       })
       .catch((e) => {
         this.setData({ loading: false });
         wx.showToast({ title: '加载失败: ' + e.message, icon: 'none' });
       });
+  },
+
+  // 二维码/条形码图片加载失败兜底（不阻塞待办列表渲染）
+  onImgError(e) {
+    console.warn('二维码/条形码图片加载失败:', e && e.detail && e.detail.errMsg);
   },
 
   now() {

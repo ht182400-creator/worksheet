@@ -117,6 +117,8 @@ npm test           # vitest 单元测试（2026-07-23 新增，见 §05 §7）
 | `WX_APPID` | 空（必须从环境变量注入） | 小程序 AppID（非敏感）；由 backend/.env 或系统环境变量提供，详见 [07](./07_小程序占位符与配置处理手册.md) |
 | `WX_APPSECRET` | 空（必须从环境变量注入） | 小程序密钥（【机密】）；仅 backend/.env / 系统环境变量，绝不入库、不写前端 |
 | `WX_SUBSCRIBE_TEMPLATE_ID` | 空（必须从环境变量注入） | 订阅消息模板 ID（非敏感）；须与小程序端 TEMPLATE_ID、后端 WX_TEMPLATE_FIELDS 一致 |
+| `WX_PUSH_ENABLED` | `False`（从环境变量读取） | 推送总开关：`.env` 置 `True` 开启订阅消息推送（需配合 WX_APPID/WX_APPSECRET/WX_SUBSCRIBE_TEMPLATE_ID 已配；已从 `config.py` 硬编码改为环境变量读取） |
+| `WX_PUSH_DRY_RUN` | `False`（从环境变量读取） | 推送本地联调开关：置 `True` 时不真正调用微信 API，仅构造完整请求体并打印/返回，用于**无真实模板 ID / 无真实订阅授权**时验证「消息体构造 + 字段映射 + 触发时机」整条链路（详见 §新增 / `07` §8.4） |
 
 ### 2.4 数据库迁移（生产）
 

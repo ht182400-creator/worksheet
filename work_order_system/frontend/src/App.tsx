@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { api, ApiError, OcrResult } from './api/client'
+import { api, ApiError, OcrResult, WorkerResult } from './api/client'
 
 interface StateMachine {
   current_state: number
@@ -76,6 +76,17 @@ export default function App() {
   const [ocrStage, setOcrStage] = useState('')        // 当前阶段（进度条中文文案映射）
   const [editFields, setEditFields] = useState<Record<string, string>>({})
   const pollRef = useRef<number | null>(null)
+
+  // ===== 工人管理面板（操作员后台浏览/查/改/删，§工人管理面板）=====
+  const [workerQuery, setWorkerQuery] = useState('')       // 搜索框：手机号或 openid 后 N 位
+  const [workerResults, setWorkerResults] = useState<WorkerResult[]>([])  // 搜索结果
+  const [workerMsg, setWorkerMsg] = useState('')           // 面板内提示/错误
+  const [nameDrafts, setNameDrafts] = useState<Record<string, string>>({})  // 各工人姓名草稿
+  const [allWorkers, setAllWorkers] = useState<WorkerResult[]>([])        // 浏览：所有工人记录
+  const [selectedWorker, setSelectedWorker] = useState<WorkerResult | null>(null)  // 选中的单条记录
+  const [editName, setEditName] = useState('')             // 选中记录的姓名编辑草稿
+  const [editPhone, setEditPhone] = useState('')           // 选中记录的手机号编辑草稿
+  const [editQuota, setEditQuota] = useState('')           // 选中记录的订阅余量编辑草稿
 
   /** 创建工单（幂等键防重试）。 */
   async function createOrder() {
@@ -211,6 +222,125 @@ export default function App() {
     }
   }
 
+  /** 搜索工人（按手机号模糊 + openid 后缀，§工人管理面板）。 */
+  async function searchWorker() {
+    if (!workerQuery.trim()) {
+      setWorkerMsg('请输入手机号或 openid 后 N 位')
+      return
+    }
+    setWorkerMsg('')
+    try {
+      const rows = (await api.searchWorkers(workerQuery.trim())) as WorkerResult[]
+      setWorkerResults(rows)
+      if (rows.length === 0) setWorkerMsg('未找到匹配的工人')
+    } catch (e) {
+      setWorkerMsg((e as ApiError).message)
+    }
+  }
+
+  /** 保存某工人的姓名绑定（§工人管理面板）。 */
+  async function saveWorkerName(openid: string) {
+    const name = nameDrafts[openid]
+    if (name === undefined) return
+    try {
+      const updated = await api.updateWorker(openid, { name })
+      // 更新本地列表中的姓名并清除草稿
+      setWorkerResults((prev) =>
+        prev.map((w) => (w.openid === openid ? { ...w, name: updated.name } : w)),
+      )
+      setNameDrafts((prev) => {
+        const next = { ...prev }
+        delete next[openid]
+        return next
+      })
+      setWorkerMsg(`已保存 ${updated.name || '(空)'} 的姓名绑定`)
+    } catch (e) {
+      setWorkerMsg((e as ApiError).message)
+    }
+  }
+
+  /** 浏览所有工人记录（§工人管理面板：列表全量）。 */
+  async function browseWorkers() {
+    setWorkerMsg('')
+    try {
+      const rows = (await api.listWorkers()) as WorkerResult[]
+      setAllWorkers(rows)
+      setSelectedWorker(null)  // 切换列表时收起上一条详情，避免误改
+      if (rows.length === 0) setWorkerMsg('暂无工人记录')
+    } catch (e) {
+      setWorkerMsg((e as ApiError).message)
+    }
+  }
+
+  /** 查：点击列表某条记录，拉取完整信息并进入编辑态（§工人管理面板）。 */
+  async function selectWorker(openid: string) {
+    setWorkerMsg('')
+    try {
+      const detail = (await api.getWorker(openid)) as WorkerResult
+      setSelectedWorker(detail)
+      setEditName(detail.name)
+      setEditPhone(detail.phone)
+      setEditQuota(detail.subscribe_quota == null ? '' : String(detail.subscribe_quota))
+    } catch (e) {
+      setWorkerMsg((e as ApiError).message)
+    }
+  }
+
+  /** 改：保存选中记录的姓名/手机号/订阅余量（§工人管理面板）。 */
+  async function saveSelectedWorker() {
+    if (!selectedWorker) return
+    const openid = selectedWorker.openid
+    setWorkerMsg('')
+    try {
+      const quotaNum = editQuota.trim() === '' ? undefined : Number(editQuota)
+      if (editQuota.trim() !== '' && Number.isNaN(quotaNum)) {
+        setWorkerMsg('订阅余量必须是数字')
+        return
+      }
+      // 手机号校验：国内手机号 11 位且以 1 开头；留空视为不修改（沿用原值）
+      const phoneTrim = editPhone.trim()
+      const phoneChanged = phoneTrim !== selectedWorker.phone
+      if (phoneChanged && phoneTrim !== '' && !/^1\d{10}$/.test(phoneTrim)) {
+        setWorkerMsg('手机号必须是 11 位数字且以 1 开头')
+        return
+      }
+      const payload: { name?: string; phone?: string; subscribe_quota?: number } = {}
+      // 仅提交与数据库当前值不同的字段，减少不必要写入（§工人管理面板）
+      if (editName !== selectedWorker.name) payload.name = editName
+      if (editPhone !== selectedWorker.phone) payload.phone = editPhone
+      if (quotaNum !== undefined && quotaNum !== selectedWorker.subscribe_quota) {
+        payload.subscribe_quota = quotaNum
+      }
+      if (Object.keys(payload).length === 0) {
+        setWorkerMsg('没有改动，无需保存')
+        return
+      }
+      const updated = await api.updateWorker(openid, payload)
+      setSelectedWorker(updated)
+      // 同步刷新浏览列表中的该行
+      setAllWorkers((prev) => prev.map((w) => (w.openid === openid ? updated : w)))
+      setWorkerMsg(`已更新 ${updated.name || '(空)'} 的记录`)
+    } catch (e) {
+      setWorkerMsg((e as ApiError).message)
+    }
+  }
+
+  /** 删：删除选中记录（§工人管理面板）。带二次确认防误删。 */
+  async function deleteSelectedWorker() {
+    if (!selectedWorker) return
+    const openid = selectedWorker.openid
+    if (!window.confirm(`确认删除工人 ${selectedWorker.name || openid}？此操作不可恢复。`)) return
+    setWorkerMsg('')
+    try {
+      await api.deleteWorker(openid)
+      setAllWorkers((prev) => prev.filter((w) => w.openid !== openid))
+      if (selectedWorker.openid === openid) setSelectedWorker(null)
+      setWorkerMsg('已删除该工人记录')
+    } catch (e) {
+      setWorkerMsg((e as ApiError).message)
+    }
+  }
+
   return (
     <div className="app">
       <h1>工单智能识别与扫码分发系统</h1>
@@ -335,6 +465,111 @@ export default function App() {
         />
         <button onClick={submitReport}>提交报工</button>
         {reportResult && <p className="result">{reportResult}</p>}
+      </section>
+
+      {/* ===== 4. 工人管理面板（操作员后台补填姓名，§工人管理面板） ===== */}
+      <section>
+        <h2>4. 工人管理（补填姓名）</h2>
+        <input
+          value={workerQuery}
+          onChange={(e) => setWorkerQuery(e.target.value)}
+          placeholder="输入手机号或微信用户 openid 后 6 位"
+        />
+        <button onClick={searchWorker}>搜索</button>
+        {workerMsg && <p className="msg">{workerMsg}</p>}
+        {workerResults?.length ? (
+          <table className="worker-table">
+            <thead>
+              <tr><th>手机号</th><th>微信 openid</th><th>当前姓名</th><th>补填姓名</th><th>操作</th></tr>
+            </thead>
+            <tbody>
+              {(workerResults || []).map((w) => (
+                <tr key={w.openid}>
+                  <td>{w.phone || '—'}</td>
+                  <td style={{ wordBreak: 'break-all' }}>…{w.openid.slice(-6)}</td>
+                  <td>{w.name || '未命名'}</td>
+                  <td>
+                    <input
+                      value={nameDrafts[w.openid] ?? w.name}
+                      onChange={(e) =>
+                        setNameDrafts((prev) => ({ ...prev, [w.openid]: e.target.value }))
+                      }
+                      placeholder="输入姓名"
+                    />
+                  </td>
+                  <td>
+                    <button onClick={() => saveWorkerName(w.openid)}>保存</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
+
+        <hr className="panel-divider" />
+        <h3>浏览所有记录</h3>
+        <button onClick={browseWorkers}>浏览所有记录</button>
+        {allWorkers.length ? (
+          <table className="worker-table">
+            <thead>
+              <tr>
+                <th>手机号</th>
+                <th>微信 openid</th>
+                <th>姓名</th>
+                <th>订阅余量</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allWorkers.map((w) => (
+                <tr
+                  key={w.openid}
+                  className={selectedWorker?.openid === w.openid ? 'selected' : ''}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => selectWorker(w.openid)}
+                >
+                  <td>{w.phone || '—'}</td>
+                  <td style={{ wordBreak: 'break-all' }}>…{w.openid.slice(-6)}</td>
+                  <td>{w.name || '未命名'}</td>
+                  <td>{w.subscribe_quota ?? '—'}</td>
+                  <td>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        selectWorker(w.openid)
+                      }}
+                    >
+                      查看 / 编辑
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
+
+        {selectedWorker && (
+          <div className="worker-detail">
+            <h3>记录详情（查 / 改 / 删）</h3>
+            <p className="mono">微信 openid：{selectedWorker.openid}</p>
+            <label className="field">
+              姓名
+              <input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="姓名" />
+            </label>
+            <label className="field">
+              手机号
+              <input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} placeholder="手机号" />
+            </label>
+            <label className="field">
+              订阅余量
+              <input value={editQuota} onChange={(e) => setEditQuota(e.target.value)} placeholder="数字" />
+            </label>
+            <div className="worker-detail-actions">
+              <button onClick={saveSelectedWorker}>保存修改</button>
+              <button className="danger" onClick={deleteSelectedWorker}>删除记录</button>
+            </div>
+          </div>
+        )}
       </section>
 
       {msg && <div className="msg">{msg}</div>}

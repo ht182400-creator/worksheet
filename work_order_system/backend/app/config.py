@@ -33,6 +33,8 @@ BIGSCREEN_SNAPSHOT_SECONDS = 300       # 大屏静态快照阈值（5min）
 QRCODE_MIN_DPI = 300                   # 二维码打印分辨率下限（BR-15）
 QRCODE_MIN_SIZE_MM = 30                # 二维码最小尺寸（BR-15）
 QRCODE_BATCH_MAX = 100                 # 批量生成上限（M3-02）
+QRCODE_IMG_DIR = Path(__file__).resolve().parent.parent / "data" / "qrcode_imgs"  # 二维码/条形码图片缓存目录（小程序 <image> 直显，零前端依赖）
+QRCODE_DEEPLINK_SCHEME = "wo://report"  # 小程序扫码报工深链 scheme（wx.scanCode 解析后跳转报工页）
 OCR_DOC_CONFIDENCE_THRESHOLD = 0.60    # 整单置信度阈值（BR-20）
 OCR_KEY_FIELD_ERROR_LIMIT = 3          # 关键字段错上限（BR-20）
 REPORT_OVERFLOW_CODE = "BIZ_REPORT_OVERFLOW"
@@ -102,7 +104,7 @@ REPORT_NOT_FOUND_CODE = "BIZ_REPORT_NOT_FOUND"
 
 # 微信小程序订阅消息推送（工单→工人，§新增）。WX_PUSH_ENABLED=False 时全链路 no-op。
 # 密钥经环境变量注入，禁止硬编码；配置 appid/secret 并确认模板后改 True。
-WX_PUSH_ENABLED = False                # 总开关：配置 appid/secret 且确认模板后改 True
+WX_PUSH_ENABLED = os.getenv("WX_PUSH_ENABLED", "False").lower() == "true"  # 总开关：从 .env 注入（默认关闭，配置 appid/secret+模板后改 True）
 WX_APPID = os.getenv("WX_APPID", "")               # 小程序 appid（环境变量注入，避免硬编码密钥）
 WX_APPSECRET = os.getenv("WX_APPSECRET", "")       # 小程序 secret（环境变量注入）
 WX_SUBSCRIBE_TEMPLATE_ID = os.getenv("WX_SUBSCRIBE_TEMPLATE_ID", "")  # 订阅消息模板 ID
@@ -118,6 +120,9 @@ WX_TEMPLATE_FIELDS = {
     "number1": "{plan_qty}",
     "thing3": "{event_hint}",
 }
+# 推送本地联调开关（默认关闭）：开启后不真正调用微信 API，仅构造完整请求体并打印/返回，
+# 用于无真实模板 ID / 无真实订阅授权时验证「消息体构造 + 字段映射 + 触发时机」整条链路。
+WX_PUSH_DRY_RUN = os.getenv("WX_PUSH_DRY_RUN", "False").lower() == "true"
 
 # 工单状态常量（状态机权威源见 state_machine.py / §03）
 WORK_ORDER_STATE_DISPATCHED = 3        # 已分发（GEN_QRCODE）：触发"派活"推送（两处都推之一）

@@ -5,4 +5,11 @@
 .value.small { font-size:22rpx; word-break:break-all; }
 .input { border:1rpx solid #eee; border-radius:12rpx; padding:16rpx; margin:12rpx 0; font-size:28rpx; }
 .btn { margin-top:16rpx; background:#07c160; color:#fff; }
+/* 授权/待办按钮：按内容宽度 +1 个汉字，不再撑满整行 */
+.btn-auto { width:fit-content; padding-left:0.5em; padding-right:0.5em; margin-left:auto; margin-right:auto; }
 .btn-ghost { background:#fff; color:#07c160; border:1rpx solid #07c160; }
+.btn-row { margin-top:8rpx; }
+.btn-danger { background:#fa5151; color:#fff; }
+.name-line { display:flex; align-items:center; }
+.name-line .input { flex:1; margin-right:16rpx; }
+.pick-btn { padding:14rpx 24rpx; background:#f2f3f5; color:#07c160; border-radius:12rpx; font-size:26rpx; white-space:nowrap; }

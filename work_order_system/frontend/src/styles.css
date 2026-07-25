@@ -177,3 +177,83 @@ button:hover {
   font-size: 13px;
   color: #0050b3;
 }
+
+/* ===== 工人管理面板（操作员后台补填姓名，§工人管理面板）===== */
+.worker-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+}
+
+.worker-table th,
+.worker-table td {
+  border: 1px solid #e8e8e8;
+  padding: 6px 8px;
+  text-align: left;
+  font-size: 13px;
+}
+
+.worker-table input {
+  margin: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* 浏览列表中选中的那一行高亮 */
+.worker-table tr.selected {
+  background-color: #e6f4ff;
+}
+
+/* 面板内分区分隔线 */
+.panel-divider {
+  margin: 24px 0 8px;
+  border: none;
+  border-top: 1px dashed #d9d9d9;
+}
+
+/* 选中记录的详情卡（查/改/删） */
+.worker-detail {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #91d5ff;
+  border-radius: 6px;
+  background: #f5fbff;
+}
+
+.worker-detail .mono {
+  word-break: break-all;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #555;
+}
+
+.worker-detail .field {
+  display: block;
+  margin: 10px 0;
+  font-size: 13px;
+  color: #333;
+}
+
+.worker-detail .field input {
+  display: block;
+  margin-top: 4px;
+  padding: 6px 8px;
+  width: 100%;
+  max-width: 320px;
+  box-sizing: border-box;
+}
+
+.worker-detail-actions {
+  margin-top: 12px;
+}
+
+/* 危险操作按钮（删除） */
+button.danger {
+  background-color: #ff4d4f;
+  color: #fff;
+  margin-left: 8px;
+}
+
+button.danger:hover {
+  background-color: #d9363e;
+}

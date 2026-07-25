@@ -6,10 +6,21 @@
 
   <view wx:if="{{tasks.length === 0 && !loading}}" class="empty">暂无待办工单</view>
 
-  <view wx:for="{{tasks}}" wx:key="order_uuid" class="task">
-    <view class="line"><text class="k">工单</text><text class="v">{{item.order_uuid}}</text></view>
-    <view class="line"><text class="k">工序</text><text class="v">{{item.process_code}}</text></view>
-    <view class="line"><text class="k">计划/已报</text><text class="v">{{item.required_qty}} / {{item.completed_qty}}</text></view>
-    <view class="line"><text class="k">剩余</text><text class="v strong">{{item.remaining_qty}}</text></view>
-  </view>
+    <view wx:for="{{tasks}}" wx:key="*this" class="task">
+      <view class="line"><text class="k">工单号</text><text class="v">{{item.display_no || '—'}}</text></view>
+      <view class="line"><text class="k">工单</text><text class="v">{{item.order_uuid}}</text></view>
+      <view class="line"><text class="k">工序</text><text class="v">{{item.process_code}}</text></view>
+      <view class="line"><text class="k">计划/已报</text><text class="v">{{item.required_qty}} / {{item.completed_qty}}</text></view>
+      <view class="line"><text class="k">剩余</text><text class="v strong">{{item.remaining_qty}}</text></view>
+      <view class="codes">
+        <view class="code-box">
+          <text class="code-label">扫码报工</text>
+          <image class="code-img" mode="widthFix" src="{{item.qrUrl}}" binderror="onImgError"></image>
+        </view>
+        <view class="code-box">
+          <text class="code-label">工单号条码</text>
+          <image class="code-img" mode="widthFix" src="{{item.barUrl}}" binderror="onImgError"></image>
+        </view>
+      </view>
+    </view>
 </view>

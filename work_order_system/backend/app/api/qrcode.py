@@ -1,13 +1,20 @@
 """二维码路由：生成 / 批量 / 打印确认（§25.2.6 / BR-15 / BR-21）。"""
-import uuid
+import hashlib
+import io
+import traceback
+from pathlib import Path
 
+import qrcode
+import barcode
+from barcode.writer import ImageWriter
 from fastapi import APIRouter, Depends
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import QRCODE_BATCH_MAX, API_V1_PREFIX
-from app.db import get_db
+from app.config import QRCODE_BATCH_MAX, API_V1_PREFIX, QRCODE_IMG_DIR, QRCODE_DEEPLINK_SCHEME
+from app.db import get_db, WorkOrderORM
 from app.logger import get_logger
 from app.models import QrcodeGenerateRequest, QrcodeBatchRequest
 from app.store import generate_qrcode, batch_qrcode, confirm_print, BusinessError
@@ -74,3 +81,63 @@ def _trace() -> str:
 
 def _fail(code: str, message: str, status: int):
     return JSONResponse(status_code=status, content={"code": code, "message": message, "traceId": _trace()})
+
+
+@router.get("/qrcode/img")
+def qrcode_image_endpoint(
+    order_uuid: str,
+    process_code: str = "",
+    t: str = "qr",
+    db: Session = Depends(get_db),
+):
+    """返回工单/工序二维码或条形码 PNG（供小程序 <image> 直接显示，零前端依赖）。
+
+    - t=qr：内容=扫码报工深链 `{QRCODE_DEEPLINK_SCHEME}?order_uuid=&process_code=`，
+      工人用小程序内 `wx.scanCode` 扫描后解析并跳转报工页；
+    - t=bar：内容=工单号 display_no（Code128 条码，供扫码枪读取）。
+    按下参数哈希缓存到 QRCODE_IMG_DIR，命中直接返回，避免重复绘制。
+    """
+    try:
+        cache_dir = QRCODE_IMG_DIR
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_key = hashlib.md5(f"{order_uuid}|{process_code}|{t}".encode("utf-8")).hexdigest()
+        cache_file = cache_dir / f"{cache_key}.png"
+        if cache_file.exists():
+            return _png(cache_file.read_bytes())
+        if t == "bar":
+            wo = db.get(WorkOrderORM, order_uuid)
+            text = wo.display_no if wo else order_uuid
+            img_bytes = _gen_barcode(text)
+        else:
+            deep = f"{QRCODE_DEEPLINK_SCHEME}?order_uuid={order_uuid}&process_code={process_code}"
+            img_bytes = _gen_qrcode(deep)
+        cache_file.write_bytes(img_bytes)
+        return _png(img_bytes)
+    except Exception as exc:  # noqa: BLE001
+        log.error("生成二维码/条形码图片异常: %s\n%s", exc, traceback.format_exc())
+        return _fail("BIZ_QRCODE_FAILED", "生成图片失败", 500)
+
+
+def _png(b: bytes) -> Response:
+    """将 PNG 字节包装为图片响应。"""
+    return Response(content=b, media_type="image/png")
+
+
+def _gen_qrcode(text: str) -> bytes:
+    """生成二维码 PNG 字节（纠错级 M，黑底白字）。"""
+    buf = io.BytesIO()
+    qr = qrcode.QRCode(box_size=8, border=2, error_correction=qrcode.constants.ERROR_CORRECT_M)
+    qr.add_data(text)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _gen_barcode(text: str) -> bytes:
+    """生成 Code128 条形码 PNG 字节（不绘文字，规避字体依赖）。"""
+    buf = io.BytesIO()
+    writer = ImageWriter()
+    code128 = barcode.get("Code128", text, writer=writer)
+    code128.write(buf, options={"write_text": False, "module_height": 12, "module_width": 0.3, "quiet_zone": 4})
+    return buf.getvalue()

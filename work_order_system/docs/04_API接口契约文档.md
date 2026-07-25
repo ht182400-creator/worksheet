@@ -2,7 +2,7 @@
 
 > 对应 V5.0 §25 接口契约。实现文件：`backend/app/api/*.py`。前缀统一 `API_V1_PREFIX=/api/v1`。
 >
-> 已落地 **14 个接口**（与设计稿 §25 全量清单一致）。每个接口标注：方法、路径、角色、幂等、请求、响应、错误码。
+> 已落地 **24 个 `/api/v1` 业务接口**（另有 `GET /health` 部署探针，不计入业务接口数）。含新增 `GET /qrcode/img` 图片直显、`GET /workers` 工人列表、工人管理面板「浏览/查/改/删」：`GET /workers`、`GET /workers/search`、`GET /workers/by-openid/{openid}`、`PATCH /workers/{openid}`、`DELETE /workers/{openid}`，以及微信小程序对接 `POST /wechat/code2session` / `GET /wechat/subscribe-config`；与设计稿 §25 全量清单一致。每个接口标注：方法、路径、角色、幂等、请求、响应、错误码。
 
 ## 通用约定（§25.1）
 
@@ -12,7 +12,7 @@
 - **乐观锁**：`PATCH /status`、报工 `version` 字段。
 - **响应体**：成功 `{"code":"0","data":...,"traceId":...}`；错误 `{"code":"BIZ_*","message":...,"traceId":...}`。
 
-## 接口清单（已落地 14 个）
+## 接口清单（已落地 24 个 /api/v1 业务接口）
 
 | # | 方法 | 路径 | 角色 | 幂等 | 说明 |
 | --- | --- | --- | --- | --- | --- |
@@ -25,16 +25,21 @@
 | 7 | POST | `/qrcode/generate` | 文员 | 工单互斥 | 单张二维码生成 |
 | 8 | POST | `/qrcode/batch` | 文员 | — | 批量生成（≤100，202+Location） |
 | 9 | POST | `/qrcode/print/confirm` | 文员 | — | 打印确认 3a→3b |
-| 10 | POST | `/files/upload` | 文员 | MD5 | OCR 上传（202+taskId） |
-| 11 | GET | `/ocr/tasks/{task_id}` | 文员 | — | OCR 轮询（后端原生 OCR / PDF 文本层，方案 A） |
-| 12 | POST | `/conflicts/{conflict_id}/resolve` | 主管 | 防竞态 | 冲突裁决 |
-| 15 | POST | `/ocr/parse-text` | 文员 | — | 外部已识别原文 → 字段解析（可选；主路径见 #10/#11 后端原生 OCR，方案 A） |
-| 13 | GET | `/bigscreen/metrics` | 大屏 | — | SSE 指标流 |
-| 14 | GET | `/pending-tasks` | 工人/小程序 | — | 工人待办（新增 `assignee_openid` 过滤，"我的待办"） |
-| 15 | POST | `/workers` | 小程序 | — | 工人注册/更新（openid + 订阅授权余量，§新增推送；或传 `code` 由后端换 openid） |
-| 16 | GET | `/workers/by-openid/{openid}` | 小程序 | — | 查询工人订阅授权余量（§新增推送） |
-| 17 | POST | `/wechat/code2session` | 小程序 | — | wx.login 的 `code` → openid（§新增推送，安全起见不回传 session_key） |
-| 18 | GET | `/wechat/subscribe-config` | 小程序 | — | 下发订阅消息配置（template_id / page / enabled） |
+| 10 | GET | `/qrcode/img` | 工人/小程序 | — | 二维码/条形码图片直显（t=qr 扫码报工深链 / t=bar 工单号 Code128，PNG，按参数哈希缓存） |
+| 11 | POST | `/files/upload` | 文员 | MD5 | OCR 上传（202+taskId） |
+| 12 | GET | `/ocr/tasks/{task_id}` | 文员 | — | OCR 轮询（后端原生 OCR / PDF 文本层，方案 A） |
+| 13 | POST | `/ocr/parse-text` | 文员 | — | 外部已识别原文 → 字段解析（可选；主路径见 #11/#12 后端原生 OCR，方案 A） |
+| 14 | POST | `/conflicts/{conflict_id}/resolve` | 主管 | 防竞态 | 冲突裁决 |
+| 15 | GET | `/bigscreen/metrics` | 大屏 | — | SSE 指标流 |
+| 16 | GET | `/pending-tasks` | 工人/小程序 | — | 工人待办（新增 `assignee_openid` 过滤，"我的待办"） |
+| 17 | POST | `/workers` | 小程序 | — | 工人注册/更新（openid + 订阅授权余量，§新增推送；或传 `code` 由后端换 openid） |
+| 18 | GET | `/workers` | 操作员/小程序 | — | 列出所有工人（完整字段 openid/name/phone/subscribe_quota，§工人管理面板「浏览所有记录」+ 小程序下拉数据源） |
+| 19 | GET | `/workers/by-openid/{openid}` | 操作员/小程序 | — | 查单条工人完整信息：openid/name/phone/subscribe_quota（§工人管理面板「查」/ §新增推送） |
+| 20 | GET | `/workers/search` | 操作员/后台 | — | 工人管理面板「找人」：按手机号模糊 + openid 后缀搜索（§工人管理面板） |
+| 21 | PATCH | `/workers/{openid}` | 操作员/后台 | — | 工人管理面板「改」：补填/修正 姓名 / 手机号 / 订阅余量（§工人管理面板） |
+| 22 | DELETE | `/workers/{openid}` | 操作员/后台 | — | 工人管理面板「删」：删除工人记录（§工人管理面板） |
+| 23 | POST | `/wechat/code2session` | 小程序 | — | wx.login 的 `code` → openid（§新增推送，安全起见不回传 session_key） |
+| 24 | GET | `/wechat/subscribe-config` | 小程序 | — | 下发订阅消息配置（template_id / page / enabled） |
 | — | GET | `/health` | — | — | 健康检查（部署探针） |
 
 ## 关键接口契约
@@ -174,17 +179,21 @@
 
 ### 14. GET /pending-tasks
 查询：`operator_id?`, `state?`, `assignee_openid?`（§新增推送：按工单人 openid 过滤，仅返回其被指派工单下的工序；小程序拉取"我的待办"）
-响应：`200 {data:[{order_uuid, process_code, required_qty, completed_qty, remaining_qty}]}`
+响应：`200 {data:[{order_uuid, process_code, display_no, required_qty, completed_qty, remaining_qty}]}`
+   - `display_no` 由 store 关联 `work_orders` 表返回（§新增，便于小程序直接展示工单号，无需二次查询）。
 
 ### 15. POST /workers
-请求：`WorkerRegister{openid?, code?, name?, tenant_id, subscribe_quota?}`
+请求：`WorkerRegister{openid?, code?, name?, tenant_id, subscribe_quota?, phone_code?, phone?}`
 - `openid` 与 `code` 二选一：直接传 `openid` 注册；或传 wx.login 的 `code`，由后端调微信 `jscode2session` 换取 `openid`（小程序无法直连微信拿 openid）。
 - `subscribe_quota` 上报用户已授权的一次性订阅剩余条数（每次 `wx.requestSubscribeMessage` 授权 +1）。
-响应：`200 {code:"0", data:{openid, subscribe_quota}, traceId:...}`
+- `phone_code?`：微信 `getPhoneNumber` 按钮返回的 `e.detail.code`，后端调 `wxa/business/getuserphonenumber` 解码真实手机号并与 openid 关联（§新增 getPhoneNumber）。解码失败仅告警降级（注册仍成功、phone 为空），不阻断注册。
+- `phone?`：直接提供手机号（操作员补录 / 测试用；生产优先用 `phone_code` 解码）。
+- 仅当传入「非空手机号」才覆盖已有手机号，空串不清除（与 name 同策略，§修复）。
+响应：`200 {code:"0", data:{openid, subscribe_quota, phone}, traceId:...}`
 错误：`400 BIZ_WORKER_OPENID_REQUIRED`（openid 与 code 都未给）/ `502 BIZ_WX_NOT_CONFIGURED`（未配置 WX_APPID/WX_APPSECRET）/ `502 BIZ_WX_CODE2SESSION_FAILED`（微信换取失败，如 code 无效）/ `500 BIZ_WORKER_REGISTER_FAILED`
 
 ### 16. GET /workers/by-openid/{openid}
-响应：`200 {code:"0", data:{openid, subscribe_quota}, traceId:...}`
+响应：`200 {code:"0", data:{openid, name, phone, subscribe_quota}, traceId:...}`（`name` 为空时前端按「未命名」展示）
 错误：`404 BIZ_WORKER_NOT_FOUND`（工人未注册）
 
 ### 17. POST /wechat/code2session
@@ -198,6 +207,65 @@
 响应：`200 {code:"0", data:{enabled, template_id, page}, traceId:...}`
 - `enabled`：`WX_PUSH_ENABLED`；`template_id`：`WX_SUBSCRIBE_TEMPLATE_ID`（需与小程序后台所选模板一致）；`page`：`WX_SUBSCRIBE_PAGE`（点击订阅消息跳转页，默认 `pages/todo/todo`）。
 - 小程序启动时拉一次即可，不必硬编码模板 id。
+
+### 19. GET /qrcode/img（§新增：小程序图片直显，零前端依赖）
+查询：`order_uuid`（必填）、`process_code`（t=bar 时取工单号；t=qr 时拼深链）、`t=qr|bar`（默认 qr）
+- `t=qr`：内容 = 扫码报工深链 `{QRCODE_DEEPLINK_SCHEME}?order_uuid={order_uuid}&process_code={process_code}`，工人用小程序内 `wx.scanCode` 扫描后解析跳报工页；
+- `t=bar`：内容 = 工单号 `display_no`（Code128 条码，供扫码枪读取）。
+- 按 `md5(order_uuid|process_code|t)` 哈希缓存到 `QRCODE_IMG_DIR`，命中直接返回，避免重复绘制。
+响应：`200 image/png`（二进制 PNG，`media_type=image/png`，供 `<image src>` 直接展示）
+错误：`500 BIZ_QRCODE_FAILED`（生成失败 / 依赖缺失，如未装 `qrcode[pil]` 或 `python-barcode`）
+- 依赖：`qrcode[pil]`（已装）、`python-barcode 0.16.1`（已装）；缓存目录 `QRCODE_IMG_DIR` 由 `config.py` 配置。
+- 前端无需"构建 npm"，`todo.wxml` 直接 `<image src="{BASE_URL}/qrcode/img?...">` 即可显示二维码/条码。
+
+### 20. GET /workers（§工人管理面板：浏览所有记录）
+查询：无
+响应：`200 {code:"0", data:[{openid, name, phone, subscribe_quota}], traceId:...}`
+- 用途：①操作员后台「浏览所有记录」列表数据源（§工人管理面板）；②小程序首页姓名输入框「下拉选择」模式数据源。
+- `name` 为空时前端按「未命名」展示；`phone` 为空时按 `—` 展示。
+- 鉴权：当前为演示接口，未加鉴权（生产应限制，避免泄露工人名单）。
+- 错误：`500 BIZ_WORKER_LIST_FAILED`（查询异常）。
+
+### 21. GET /workers/search（§工人管理面板：操作员后台「找人」）
+
+> 用途：操作员在后台按「手机号」或「微信用户 openid 后 N 位」定位某个已绑手机号的工人，以便补填姓名。
+
+查询参数：`q`（必填，手机号任意片段或 openid 末段；为空返回空数组，不泄全量）。
+
+匹配规则：
+- `openid` **后缀匹配**：`openid LIKE '%{q}'`（输入微信用户后 6 位等末段）；
+- `phone` **模糊包含**：`phone LIKE '%{q}%'`（输入手机号任意片段，如后 4 位）。
+
+响应：`200 {code:"0", data:[{openid, name, phone, subscribe_quota}], traceId:...}`
+- `name` 为空时前端按「未命名」展示；`phone` 为空时前端按 `—` 展示。
+- 错误：`500 BIZ_WORKER_SEARCH_FAILED`（查询异常）。
+
+### 22. PATCH /workers/{openid}（§工人管理面板：改）
+
+> 用途：操作员为已定位的工人补填/修正 `name`、`phone`、或调整 `subscribe_quota`（订阅授权余量），对应面板「改」。
+
+路径参数：`openid`（工人唯一标识，含特殊字符需 URL 编码）。
+请求体：`WorkerUpdate{name?, phone?, subscribe_quota?}`
+- `name` / `phone` / `subscribe_quota` 均 `Optional`：传 `null`（缺省）表示不修改该字段；传显式值（含空串 `""`）覆盖，便于手动清空姓名。
+- `subscribe_quota` 为 `int`，由操作员后台调整订阅授权余量。
+- 生产主路径仅传 `name`；`phone` 一般无需（小程序已授权 getPhoneNumber 入库）。
+
+响应：`200 {code:"0", data:{openid, name, phone, subscribe_quota}, traceId:...}`
+错误：
+- `404 BIZ_WORKER_NOT_FOUND`（该 openid 不存在）；
+- `500 BIZ_WORKER_UPDATE_FAILED`（更新异常）。
+
+### 23. DELETE /workers/{openid}（§工人管理面板：删）
+
+> 用途：操作员删除某条工人记录（对应面板「删」，前端带二次确认防误删）。
+
+路径参数：`openid`（工人唯一标识，含特殊字符需 URL 编码）。
+请求体：无。
+
+响应：`200 {code:"0", data:{openid, deleted:true}, traceId:...}`
+错误：
+- `404 BIZ_WORKER_NOT_FOUND`（该 openid 不存在）；
+- `500 BIZ_WORKER_DELETE_FAILED`（删除异常）。
 
 ## 契约一致性检查
 

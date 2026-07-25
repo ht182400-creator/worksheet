@@ -25,6 +25,7 @@ from app.config import (
     WX_SUBSCRIBE_PAGE,
     WX_SUBSCRIBE_TEMPLATE_ID,
     WX_TEMPLATE_FIELDS,
+    WX_PUSH_DRY_RUN,
 )
 from app.logger import get_logger
 
@@ -39,7 +40,12 @@ _token_lock = threading.Lock()
 
 
 def is_push_enabled() -> bool:
-    """推送总开关：未配置 appid/secret 或显式关闭时为 no-op，不影响主流程。"""
+    """推送总开关：未配置 appid/secret 或显式关闭时为 no-op，不影响主流程。
+
+    ``WX_PUSH_DRY_RUN=True`` 时同样视为「启用」（仅本地联调，不真正下发微信）。
+    """
+    if WX_PUSH_DRY_RUN:
+        return True
     return bool(WX_PUSH_ENABLED) and bool(WX_APPID) and bool(WX_APPSECRET)
 
 
@@ -111,6 +117,10 @@ def push_work_order_event(openid: str, event: str, ctx: dict, page: str = None) 
     }
     if page:
         body["page"] = page
+    # 本地联调：不真正调用微信，仅打印完整请求体并返回，验证消息体/字段映射/触发链路
+    if WX_PUSH_DRY_RUN:
+        log.info("推送 DRY-RUN（不真正调用微信API）：%s", json.dumps(body, ensure_ascii=False))
+        return {"ok": True, "dry_run": True, "body": body}
     return _send(token, body)
 
 

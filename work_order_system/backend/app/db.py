@@ -4,6 +4,7 @@
 PostgreSQL/MySQL（§26 索引与乐观锁约定不变）。
 """
 import os
+import traceback
 from datetime import datetime
 
 from sqlalchemy import (
@@ -148,6 +149,7 @@ class WorkerORM(Base):
     worker_id = Column(String(36), primary_key=True)
     openid = Column(String(64), nullable=False, unique=True, index=True)
     name = Column(String(64), nullable=True)
+    phone = Column(String(20), nullable=True, index=True)  # 工人手机号（getPhoneNumber 解密，§新增）
     tenant_id = Column(String(36), nullable=False, index=True)
     subscribe_quota = Column(Integer, nullable=False, default=0)  # 一次性订阅剩余授权数
     last_push_at = Column(DateTime, nullable=True)
@@ -187,6 +189,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _migrate_ocr_task_columns()
     _migrate_work_order_columns()
+    _migrate_worker_columns()
 
 
 def _migrate_work_order_columns() -> None:
@@ -206,6 +209,25 @@ def _migrate_work_order_columns() -> None:
                     conn.execute(text(f"ALTER TABLE work_orders ADD COLUMN {col} {ddl}"))
     except Exception as exc:  # noqa: BLE001 - 迁移失败不应阻断启动
         log.error("工单表迁移异常: %s\n%s", exc, traceback.format_exc())
+
+
+def _migrate_worker_columns() -> None:
+    """旧库兼容迁移：为 workers 补加 phone 列（首次部署新列时执行，§新增 getPhoneNumber）。"""
+    from sqlalchemy import inspect
+
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("workers"):
+            return
+        existing = {c["name"] for c in insp.get_columns("workers")}
+        needed = {"phone": "VARCHAR(20)"}
+        with engine.begin() as conn:
+            for col, ddl in needed.items():
+                if col not in existing:
+                    log.info("工人表迁移：新增列 %s", col)
+                    conn.execute(text(f"ALTER TABLE workers ADD COLUMN {col} {ddl}"))
+    except Exception as exc:  # noqa: BLE001 - 迁移失败不应阻断启动
+        log.error("工人表迁移异常: %s\n%s", exc, traceback.format_exc())
 
 
 def get_db():
