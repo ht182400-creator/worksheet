@@ -55,3 +55,4 @@ Data/
 # ===== 排查/私有配置（本地调试产物，非源码，不入库） =====
 work_order_system/backend/smoke_*.txt
 work_order_system/miniprogram/project.private.config.json
+history_202607231534.md
